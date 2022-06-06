@@ -1,0 +1,3376 @@
+---
+title: "Sulpride effects on learning about trustworthiness of others - figures"
+author: "Nace Mikus"
+date: "26 3 2020"
+output:
+  word_document: default
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r load packages and  data, include = FALSE, eval = TRUE}
+# load packages -----------------------------------------------------------
+
+
+#library(gdata)
+#library(lme4)
+library(tidyverse)  # ggplot, dplyr, and friends
+library(nlme)
+library(lme4)
+library(lmerTest)
+library(brms)
+# library(MASS)
+
+library(ggridges)   # Ridge plots
+library(ggstance)   # Horizontal pointranges and bars
+library(patchwork)  # Lay out multiple ggplot plots;
+library(scales)     # Nicer formatting for numbers
+library(broom)
+
+library(rstan)
+library(loo)
+library(cowplot)
+library(ggthemes)
+library(foreign)
+
+# not sure if needed
+# library(dplyr)
+# library(smooth)
+# library(ggplot2)
+# library(reshape2)
+# library(tidyr)
+
+# library(Rcmdr)
+
+
+#library(psych)
+#library(tidyr)
+#library(ggpubr)
+#library(grid)
+
+#library(ggforce)
+#library(stargazer)
+#library(tables)
+# library(knitr)
+# library(xtable)
+#library(lmerTest)
+#library(ez)
+#library(gtools)
+#library(perm)
+#library(caret)
+#library(pracma)
+#library(ggridges)
+
+# utility functions 
+source("theme_functions.r")
+logit <- function(x) log(x/(1-x))
+inv_logit <- function(x) 1/(1+exp(-x))
+pw = function(x,delta) x^delta/(x^delta + (1-x)^delta) 
+sf <- function(x, pub = 0, prob_vect = c(0.5,0.025,0.975), dec_no = 3) { 
+  y <- quantile(x, probs=prob_vect)%>% round(dec_no) 
+  y[[4]] <- mean(x<0) %>% round(3)
+  names(y)[4] <- "p"
+  p_val = y[[4]];
+  if (y[[4]] > 0.5) p_val = 1 - p_val
+  
+  if (y[[1]] < 0) {
+    y_text = paste("b = ", y[[1]], ", 95% CrI [",y[[2]], ", ",y[[3]], "], P(b>0) = ",p_val, sep ="")
+  } else   y_text = paste("b = ", y[[1]], ", 95% CrI [",y[[2]], ", ",y[[3]], "], P(b<0) = ",p_val, sep ="")
+  
+  if (pub == 0) {
+    return(y)
+  } else {
+    
+    return(y_text)  
+  } }
+wo <- function(x, d = 3, remove.na = FALSE) {
+  if (remove.na) {
+    x <- x[abs(x - mean(x, na.rm =TRUE)) <d*sd(x, na.rm =TRUE)]
+  } else  {
+    x[abs(x - mean(x, na.rm =TRUE)) > d*sd(x, na.rm =TRUE)] <- NA
+    
+  }
+  return(x)}
+
+# load data ---------------------------------------------------------------
+# rm(list=ls())  # clear all
+
+# sourceWD <-  "C:/NBU/Projects/sulpiride"
+# # sourceWD2 <-  "~/Dropbox/matching_to_sample_emo_gender/EmoSexTask/data/PilotData_July_2018/seba/"
+# saveWD <-  "C:/NBU/Projects/sulpiride"
+# setwd(sourceWD)
+
+data_beh <- readRDS("Behavioural_data.rds") # includes model specific predictions 
+
+# data preparation (re do if including a new model)
+
+
+data_good <- data_beh[data_beh$Trustee =="Good",]
+data_bad <- data_beh[data_beh$Trustee =="Bad",]
+data_sul <- data_beh[data_beh$Treatment == "sulpiride",]
+
+data_group <- readRDS("Data_group_level.rds") 
+
+data_group <- data_group %>% mutate(ID = as.factor(ID)) 
+# social interaction data ---------------------------------
+
+data_beh_SI <- read.dta("nrprdataset.dta")
+# glimpse(data_beh_SI)
+
+data_beh_SI_selected <- data_beh_SI %>% select(bmi, risk)
+
+
+data_beh_SI = as_tibble(data_beh_SI)
+
+data_beh_SI$Treatment = factor(data_beh_SI$sulpiride == "Sulpiride pill", levels = c(FALSE, TRUE), labels = c("control", "sulpride"))
+
+data_beh_SI$ID = as.factor(data_beh_SI$IDNumber)
+
+data_beh_SI <- data_beh_SI%>% mutate(NegRecFeel = FeelDelighted + FeelReward + FeelPleasure)
+data_beh_SI <- data_beh_SI%>% mutate(PosRecFeel = FeelDelightedPR + FeelRewardPR + FeelPleasurePR)
+
+# basic stats across groups 
+if (FALSE) {
+  data_demo <- data_beh_SI %>% 
+    filter(Period == 1, ID %in% unique(data_beh$ID)) %>%   
+    group_by(genotype, Treatment) %>% summarize(N = n(),
+                                                IQ = mean(fulliq, na.rm = TRUE),
+                                                IQ_sd = sd(fulliq, na.rm = TRUE),
+                                                verbalIQ = mean(verbaliq, na.rm = TRUE),
+                                                verbalIQ_sd = sd(verbaliq, na.rm = TRUE),
+                                                BMI_id = mean(bmi, na.rm = TRUE),
+                                                BMI_id_sd = sd(bmi, na.rm = TRUE)) 
+  
+  data_demo <- data_demo %>%  mutate(across(where(is.numeric), round, 3))
+  
+  data_demo %>%  write_csv("BasicDemo_table.csv")
+  lm(data = data_beh_SI %>% filter(Period == 1, ID %in% unique(data_beh$ID), !is.na(fulliq)), fulliq ~ genotype*Treatment) %>% summary()                                              
+  lm(data = data_beh_SI %>% filter(Period == 1, ID %in% unique(data_beh$ID), !is.na(verbaliq)), verbaliq ~ genotype*Treatment) %>% summary()   
+  lm(data = data_beh_SI %>% filter(Period == 1, ID %in% unique(data_beh$ID), !is.na(bmi)), bmi ~ genotype*Treatment) %>% summary()   
+  
+  
+  
+  
+  data_beh%>% filter(Trial == 1, Trustee =="Good") %>%   group_by(Genotype, Treatment) %>% summarize(N = n())
+}
+
+```
+
+# D2/3  receptor antagonism increases investment updates
+
+# plot effect of sulpiride on abs change across time 
+
+
+```{r plot investment change across time with Treatment only,fig.width=11, echo=FALSE, message= FALSE}
+
+savemodelname = 'brms_abschange_z_treatment_notrustee_trialc'
+
+if(!file.exists(paste("Behavioral Models/", savemodelname, sep = ""))){
+  print(paste("estimating model",savemodelname ))
+  brms_abschange_treatment <- brm(formula = abs_change_z ~ Treatment*Trial_c + (1|ID),
+                                  data = data_beh, family = gaussian(),
+                                  prior = c(set_prior("cauchy(0,2)", class = "sd"),
+                                            set_prior("normal(0,3)", class = "b")),
+                                  warmup = 800, iter = 3000, chains =4,
+                                  control = list(adapt_delta = 0.95))
+  
+  saveRDS(brms_abschange_treatment, file = paste("Behavioral Models/", savemodelname, sep=""))
+} else {
+  brms_abschange_treatment <- readRDS(paste("Behavioral Models/", savemodelname,".rds", sep = ""))
+  
+  
+}
+new_data<- fitted(brms_abschange_treatment , newdata = data_beh, re_formula = NA)
+
+
+new_data_zinv <- new_data*sd(data_beh$abs_change, na.rm =  TRUE) + mean(data_beh$abs_change, na.rm=TRUE)
+
+new_data_abs_change <- cbind(data_beh,new_data_zinv)
+
+g_abs_change_time <- new_data_abs_change %>% filter(!is.na(abs_change)) %>%
+  ggplot(aes(x = Trial, y = abs_change, group = ID, colour = Treatment)) +#
+  
+  geom_ribbon(data = new_data_abs_change, aes(x = Trial, ymin = Q2.5, ymax = Q97.5), fill = "#E6E6E6", alpha = 0.3 )+
+  # geom_ribbon(data = new_data_temp, aes(x = Trial, ymin = Q25, ymax = Q75),fill = "grey70", alpha = 0.8 )+
+  geom_line(data = new_data_abs_change, aes(x = Trial, y = Estimate, group = Treatment, colour = Treatment), size = 2)+
+  stat_summary(aes(group = Treatment), geom = "point", fun.y = mean, shape = 17, size = 3) +
+  theme_Publication(base_size = 15) +
+  theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_text(size=12),
+        panel.grid.major  = element_blank(),
+        legend.position = "none") +
+  ylab("Mean absolute change\nin investment")  +  scale_colour_Publication() +  scale_fill_Publication() +scale_x_discrete(name = "Trials", limits=c(0,10,20)) 
+
+g_abs_change_time
+if (FALSE) {
+  
+  post <- brms_abschange_treatment  %>% posterior_samples()
+  
+  post <- post %>% mutate(sd_total = sqrt(sigma^2 + sd_ID__Intercept^2 ))
+  post <- post/post$sd_total # get the effect size
+  post_abs_change <- post
+  post_no_z = post*sd(data_beh$abs_change, na.rm =  TRUE) # in native space
+  # (post$`b_Treatmentsulpride:Trial`*24 + post$b_Treatmentsulpride )%>% sf()
+  
+  # effect sizes slope of sulpride 
+  (post$`b_Treatmentsulpride:Trial_c`*24) %>% sf(1)
+  (post_no_z$`b_Treatmentsulpride:Trial_c`*24) %>% sf(1)
+  
+  # effect sizes of sulpride (at trial 12)
+  ( post$b_Treatmentsulpride )%>% sf(1) # effect size 
+  (post_no_z$b_Treatmentsulpride )%>% sf(1) # native space
+  
+  # effect sizes of sulpride (at trial 24)
+  (post$`b_Treatmentsulpride:Trial_c`*12 + post$b_Treatmentsulpride )%>% sf(1)
+  ((post_no_z$`b_Treatmentsulpride:Trial`*12 + post_no_z$b_Treatmentsulpride ))%>% sf(1)
+  
+  # effect sizes of sulpride (at trial 1)
+  (-post$`b_Treatmentsulpride:Trial`*12 + post$b_Treatmentsulpride )%>% sf(1)
+  (-post_no_z$`b_Treatmentsulpride:Trial`*12 + post_no_z$b_Treatmentsulpride )%>% sf(1)
+  
+  (post$`b_Treatmentsulpride:Trial`+ post$b_Treatmentsulpride )%>% quantile(probs= c(0.5,0.025,0.975)) %>% round(3)
+  post$`b_Treatmentsulpride:Trial` %>% quantile(probs= c(0.5,0.025,0.975)) %>% round(3)
+  post$b_Treatmentsulpride %>% quantile(probs= c(0.5,0.025,0.975)) %>% round(3)
+  
+  (post_no_z$`b_Treatmentsulpride:Trial`*25 + post_no_z$b_Treatmentsulpride )%>% quantile(probs= c(0.5,0.025,0.975)) %>% round(2)
+  (post_no_z$`b_Treatmentsulpride:Trial`*12 + post_no_z$b_Treatmentsulpride )%>% quantile(probs= c(0.5,0.025,0.975)) %>% round(2)
+  (post_no_z$`b_Treatmentsulpride:Trial`+ post_no_z$b_Treatmentsulpride )%>% quantile(probs= c(0.5,0.025,0.975)) %>% round(2)
+  post$`b_Treatmentsulpride:Trial` %>% quantile(probs= c(0.5,0.025,0.975)) %>% round(3)
+  
+  # ggsave("behavior_w_legend.png", plot = g_beh, device = NULL, path = NULL,
+  # scale = 1, width =11, height = 5, dpi = 300, limitsize = TRUE)
+  # g_abs_change_time + facet_wrap(~Genotype)
+  # g_beh
+  
+  
+  g_stats <- bind_cols(post_abs_change%>% transmute(C_Sul = b_Treatmentsulpride),
+                       post_abs_change%>% transmute(B_SulXTrials_end = `b_Treatmentsulpride:Trial_c`*12 + b_Treatmentsulpride),
+                       post_abs_change%>% transmute(A_SulXTrials = `b_Treatmentsulpride:Trial_c`*24)
+                       
+  ) %>% 
+    # convert them to the long format, group, and get the posterior summaries
+    pivot_longer(everything()) %>%
+    group_by(name) %>% 
+    summarise(mean = mean(value),
+              ll   = quantile(value, prob = .025),
+              ul   = quantile(value, prob = .975),
+              lls   = quantile(value, prob = .25),
+              uls   = quantile(value, prob = .75)) %>%  # since the `key` variable is really two variables in one, here we split them up
+    
+    
+    # plot!
+    ggplot(aes(x = mean, xmin = ll, xmax = ul, y = name)) +
+    geom_errorbar(aes(xmin = lls, xmax = uls), size = 1.5,color = "firebrick", width = 0)+
+    geom_vline(xintercept = 0,  linetype = "dashed") +
+    geom_pointrange(color = "firebrick") +
+    labs( y = NULL) + # subtitle = "Effect sizes (95% and 50% quantiles)",
+    theme_Publication(base_size = 15) +
+    theme(panel.grid = element_blank(),
+          axis.text.x = element_text(size=12),
+          strip.background = element_rect(fill = "transparent", color = "transparent"),
+          axis.title.x =  element_blank()) +
+    scale_y_discrete(labels = rev(c("S - P", "S - P last trial", "(S - P) * Trials")) )
+  # plot_grid(g_abs_change_time + theme(legend.position = "none"), g_stats, nrow = 2, rel_heights = c(1,.3)
+  
+  # for supplementary 
+  
+  
+}
+```
+
+
+```{r abs investment change across time with Genotype, trustee and Treatment}
+
+# stats and supplementary figure 1 a
+data_beh_id  <- data_beh %>% group_by(ID,Treatment, Genotype) %>% summarize(abschange_id =abs_change %>% mean(na.rm = T))
+data_beh_sum <- data_beh_id %>% group_by(Treatment, Genotype) %>% summarize(N = n(),
+                                                                            abschange_mean =abschange_id %>% mean(na.rm = T),
+                                                                            abschange_se = sd(abschange_id, na.rm = T)/sqrt(N))
+g_abschange_gen <- ggplot(data=data_beh_sum) +
+  # geom_hline(yintercept = 0, linetype = "dashed")+
+  geom_point(data = data_beh_id, aes(x = Treatment, y = abschange_id, fill= Treatment, colour= Treatment),  alpha = 0.3, position = position_jitterdodge(dodge.width= 0.9, jitter.width = 0.3), shape = 21, colour = "black", size = 2, stroke =1)+
+  
+  # geom_errorbar(data= model_pp_change, aes(x = Backtransfer_f, ymin = Q25, ymax = Q75, group= Treatment), width = 0, position = position_dodge(0.9),size = 2)+
+  geom_errorbar(aes(x = Treatment, ymin = abschange_mean - abschange_se, ymax = abschange_mean + abschange_se, group= Treatment), width = 0, position = position_dodge(0.9),size = 1.5)+
+  geom_point(aes(x = Treatment, y = abschange_mean, fill= Treatment, colour= Treatment), position = position_dodge(0.9), size = 3, shape= 21, colour = "black")+
+  
+  # geom_bar(aes(x = Backtransfer_f, y = mean_change, group= Treatment, fill = Treatment), stat = "identity", position = position_dodge()) +
+  # geom_errorbar(aes(x = Backtransfer_f, ymin = mean_change - se_change, ymax = mean_change + se_change, group= Treatment), width = 0, position = position_dodge(0.9))+
+  theme_Publication(base_size = 15) + theme(legend.position = "none",
+                                            axis.text.x = element_text(size=15),
+                                            axis.title.x =  element_blank(),
+                                            panel.grid.major  = element_blank()) + #scale_x_discrete(labels = c("Betray", "Equalize")) + 
+  
+  ylab("Mean absolute change\nin investment")      + scale_colour_Publication() + scale_fill_Publication()+ facet_wrap(~Genotype)#
+
+savemodelname = 'brms_abschange_z_treatment_gen_trustee_trial_c.rds'
+
+if(!file.exists(paste("Behavioral Models/", savemodelname, sep = ""))){
+  print(paste("estimating model",savemodelname ))
+  mc.treatment.notrustee <- brm(formula = abs_change_z ~ Treatment*Trial_c*Trustee_c*Genotype_c + (Trustee_c|ID),
+                                data = data_beh, family = gaussian(),
+                                prior = c(set_prior("cauchy(0,2)", class = "sd"),
+                                          set_prior("normal(0,3)", class = "b"),
+                                          set_prior("lkj(2)", class = "cor")),
+                                warmup = 800, iter = 3000, chains =4,
+                                control = list(adapt_delta = 0.95))
+  
+  cat("Saving intercept ~ change_z in ", savemodelname, "... \n")
+  saveRDS(mc.treatment.notrustee, file = paste("Behavioral Models/", savemodelname, sep=""))
+} else brms_abschange_z_treatment_gen_trustee_trial_c <- readRDS("Behavioral Models/brms_abschange_z_treatment_gen_trustee_trial_c.rds")
+
+
+#
+post <- brms_abschange_z_treatment_gen_trustee_trial_c %>% posterior_samples()
+post <- post%>% mutate(sd_total = (sqrt(sigma^2 + sd_ID__Intercept^2 +  sd_ID__Trustee_c1^2)) )
+
+post <- post/post$sd_total
+post_abs_change_gen <- post
+post_no_z = post*sd(data_beh$abs_change, na.rm =  TRUE)
+
+# main effect
+
+( post_no_z$b_Treatmentsulpride)%>% sf(1)
+# three way interactuon 
+( post_no_z$`b_Treatmentsulpride:Trial_c:Genotype_c1`)%>% sf(1)
+# two way interactuon 
+( post_no_z$`b_Treatmentsulpride:Genotype_c1`)%>% sf(1)
+
+# slope effects
+(( post_no_z$`b_Treatmentsulpride:Trial_c` )*24)%>% sf()
+
+(( post_no_z$`b_Treatmentsulpride:Trial_c`  + 0.5*post_no_z$`b_Treatmentsulpride:Trial_c:Genotype_c1`)*24) %>% sf()
+(( post_no_z$`b_Treatmentsulpride:Trial_c`  - 0.5*post_no_z$`b_Treatmentsulpride:Trial_c:Genotype_c1`)*24) %>% sf()
+
+
+# main effect sizes
+
+( post$b_Treatmentsulpride)%>% sf(1)
+( post$b_Treatmentsulpride + 1/2*post$`b_Treatmentsulpride:Genotype_c1`)%>% sf(1)
+( post$b_Treatmentsulpride - 1/2*post$`b_Treatmentsulpride:Genotype_c1`)%>% sf(1)
+
+# main effects
+
+( post_no_z$b_Treatmentsulpride)%>% sf()
+( post_no_z$b_Treatmentsulpride + 1/2*post_no_z$`b_Treatmentsulpride:Genotype_c1`)%>% sf()
+( post_no_z$b_Treatmentsulpride - 1/2*post_no_z$`b_Treatmentsulpride:Genotype_c1`)%>% sf()
+
+# effect sizes of differences in the end
+
+( post$b_Treatmentsulpride + ( post$`b_Treatmentsulpride:Trial_c`)*12)%>% sf()
+( post$b_Treatmentsulpride + 1/2*post$`b_Treatmentsulpride:Genotype_c1` + ( post$`b_Treatmentsulpride:Trial_c`  + 0.5*post$`b_Treatmentsulpride:Trial_c:Genotype_c1`)*12)%>% sf()
+( post$b_Treatmentsulpride - 1/2*post$`b_Treatmentsulpride:Genotype_c1` +( post$`b_Treatmentsulpride:Trial_c`  - 0.5*post$`b_Treatmentsulpride:Trial_c:Genotype_c1`)*12)%>% sf()
+
+# effects of differences in the end
+
+( post_no_z$b_Treatmentsulpride + ( post_no_z$`b_Treatmentsulpride:Trial_c`)*12)%>% sf()
+( post_no_z$b_Treatmentsulpride + 1/2*post_no_z$`b_Treatmentsulpride:Genotype_c1` + ( post_no_z$`b_Treatmentsulpride:Trial_c`  + 0.5*post_no_z$`b_Treatmentsulpride:Trial_c:Genotype_c1`)*12)%>% sf()
+( post_no_z$b_Treatmentsulpride - 1/2*post_no_z$`b_Treatmentsulpride:Genotype_c1` +( post_no_z$`b_Treatmentsulpride:Trial_c`  - 0.5*post_no_z$`b_Treatmentsulpride:Trial_c:Genotype_c1`)*12)%>% sf()
+
+# g_beh
+
+g_stats_gen_supp <- bind_cols(
+  post %>% transmute(A7 = `b_Treatmentsulpride:Trial_c`*24),
+  
+  post %>% transmute(A4 = (`b_Treatmentsulpride:Trial_c`  + 0.5*`b_Treatmentsulpride:Trial_c:Genotype_c1`)*24) ,
+  post %>% transmute(A1 =(`b_Treatmentsulpride:Trial_c`  - 0.5*`b_Treatmentsulpride:Trial_c:Genotype_c1`)*24) ,
+  
+  post %>% transmute(A9 =b_Treatmentsulpride),
+  post %>% transmute(A6 =b_Treatmentsulpride + 1/2*`b_Treatmentsulpride:Genotype_c1`),
+  post %>% transmute(A3 =b_Treatmentsulpride - 1/2*`b_Treatmentsulpride:Genotype_c1`),
+  
+  post %>% transmute(A8 =b_Treatmentsulpride + ( `b_Treatmentsulpride:Trial_c`)*12),
+  post %>% transmute(A5 =b_Treatmentsulpride + 1/2*`b_Treatmentsulpride:Genotype_c1` + ( `b_Treatmentsulpride:Trial_c`  + 0.5*`b_Treatmentsulpride:Trial_c:Genotype_c1`)*12),
+  post %>% transmute(A2 =b_Treatmentsulpride - 1/2*`b_Treatmentsulpride:Genotype_c1` +( `b_Treatmentsulpride:Trial_c`  - 0.5*`b_Treatmentsulpride:Trial_c:Genotype_c1`)*12)
+) %>% 
+  # convert them to the long format, group, and get the posterior summaries
+  pivot_longer(everything()) %>%
+  group_by(name) %>% 
+  summarise(mean = mean(value),
+            ll   = quantile(value, prob = .025),
+            ul   = quantile(value, prob = .975),
+            lls   = quantile(value, prob = .25),
+            uls   = quantile(value, prob = .75)) %>%  # since the `key` variable is really two variables in one, here we split them up
+  
+  
+  # plot!
+  ggplot(aes(x = mean, xmin = ll, xmax = ul, y = name)) +
+  geom_errorbar(aes(xmin = lls, xmax = uls), size = 1.5,color = "firebrick", width = 0)+
+  geom_vline(xintercept = 0, color = "firebrick", alpha = 1/5, linetype = "dashed") +
+  geom_pointrange(color = "firebrick") +
+  labs(y = NULL) + # subtitle = "Effect size (95% and 50% quantiles)", 
+  theme_Publication() +
+  theme(panel.grid = element_blank(),
+        strip.background = element_rect(fill = "transparent", color = "transparent"),
+        axis.title.x =  element_blank()) +
+  scale_y_discrete(labels = rev(c("S - P", "S - P last trial", "Difference in slopes across all trials",
+                                  "S-P in A1+", "S - P last trial in A1+", "Difference in slopes across all trials in A1+",
+                                  "S - P in A1-", "S - P last trial in A1-", "Difference in slopes across all trials in A1-")) )
+
+
+plot_grid(g_abschange_gen, g_stats_gen_supp, ncol = 1, rel_heights = c(1,0.5))
+```
+
+
+```{r abs change supplementary tables and lme models}
+
+if (FALSE)  {
+  # Supplementary Table 1 
+  
+  brms_abschange_treatment %>% fixef()%>% round(3) %>%   write.csv("brms_abschange_treatment.csv")
+  
+  # Supplementary Table 2
+  model_abs_change <- lme(abs_change_z ~ Treatment*Trial_c, data = data_beh%>% filter(!is.na(abs_change)), random = ~1|ID, method = "ML")
+  model_abs_change  %>%  summary() %>%  coef() %>% as.data.frame()%>% round(3) %>%  write.csv("lme_abschange_z_treatment_notrustee_trialc.csv")
+  
+  # Supplementary Table 3
+  
+  model_abs_change_log <- lme(log_abs_change_z ~ Treatment*Trial_c, data = data_beh%>% filter(!is.na(abs_change)), random = ~1|ID, method = "ML")
+  model_abs_change_log %>%  summary() %>%  coef() %>% as.data.frame() %>% round(3) %>%   write.csv("lme_abschange_log_z_treatment_notrustee_trialc.csv")
+  
+  brms_abschange_z_treatment_gen_trustee_trial_c %>% fixef()%>% round(3) %>%   write.csv("brms_abschange_z_treatment_gen_trustee_trialc.csv")
+  
+  g_stats_gen_supp
+  
+}
+
+```
+
+
+
+
+
+
+# plot change means 
+
+```{r plot chage trial means, fig.width = 10, fig.height = 9, echo=FALSE, warning= FALSE}
+# Supplementary figure 1 b
+# plot change trial means genotype investment -------------------------------------------------
+savemodelname = 'brms_change_z_treatment_genotype.rds'
+
+if(!file.exists(paste("Behavioral Models/", savemodelname, sep = ""))){
+  brms_change_z_treatment_genotype <- brm(formula = Change_z ~ Treatment*Genotype*Backtransfer*Trustee_c + (Trustee_c|ID),
+                                          data = data_beh, family = gaussian(),
+                                          prior = c(set_prior("cauchy(0,2)", class = "sd"),
+                                                    set_prior("normal(0,3)", class = "b"),
+                                                    set_prior("lkj(2)", class = "cor")),
+                                          warmup = 800, iter = 3000, chains =4,
+                                          control = list(adapt_delta = 0.95))
+  # summary(mc.baseline)
+  cat("Saving intercept ~ change_z in ", savemodelname, "... \n")
+  saveRDS(mc.baseline.change_z.notrustee, file = paste("Behavioral Models/", savemodelname, sep=""))
+} else brms_change_z_treatment_genotype <- readRDS("Behavioral Models/brms_change_z_treatment_genotype.rds")
+
+
+data_beh$Backtransfer_f <- factor(data_beh$Backtransfer, levels = c(-1,1), labels = c("Betray", "Equalize"))
+data_change_id <- data_beh %>% filter(!is.na(Change)) %>% group_by(Treatment, Genotype, Backtransfer_f, ID) %>% summarise( Change = mean(Change))
+data_change <-  data_change_id %>% group_by(Treatment, Genotype, Backtransfer_f) %>% summarise(N = n(),
+                                                                                               mean_change = mean(Change),
+                                                                                               se_change = sd(Change)/sqrt(N))
+
+new_data_change <- expand.grid(Treatment = data_beh$Treatment%>% unique(), 
+                               Genotype = data_beh$Genotype %>% unique(),
+                               Backtransfer = data_beh$Backtransfer %>% unique(),
+                               Trustee_c = data_beh$Trustee_c %>% unique())
+model_pp <- fitted(brms_change_z_treatment_genotype, newdata = new_data_change, re_formula = NA, summary = FALSE)
+
+model_pp <- model_pp*sd(data_beh$Change, na.rm =TRUE) +   mean(data_beh$Change, na.rm = TRUE)
+
+model_pp <- (model_pp[,new_data_change$Trustee_c == "Good"] + model_pp[,new_data_change$Trustee_c == "Bad"]) / 2 
+
+model_pp_all <- new_data_change %>% filter(Trustee_c == "Good")
+model_pp_change <- model_pp_all %>% mutate(Est = model_pp %>% apply(2, quantile, probs = c(0.5)),
+                                           Q2.5 =model_pp %>% apply(2, quantile, probs = c(0.025)),
+                                           Q25 = model_pp %>% apply(2, quantile, probs = c(0.25)),
+                                           Q75 = model_pp %>% apply(2, quantile, probs = c(0.75)),
+                                           Q975 = model_pp %>% apply(2, quantile, probs = c(0.975)))
+
+model_pp_change$Backtransfer_f <- factor(model_pp_change$Backtransfer, levels = c(-1,1), labels = c("Betray", "Equalize"))
+model_pp_change %>% glimpse()
+
+g_change <- ggplot(data=data_change) +
+  geom_hline(yintercept = 0, linetype = "dashed")+
+  geom_point(data = data_change_id, aes(x = Backtransfer_f, y = Change, fill= Treatment, colour= Treatment),  alpha = 0.3, position = position_jitterdodge(dodge.width= 0.9, jitter.width = 0.3), shape = 21, colour = "black", size = 2, stroke =1)+
+  
+  # geom_errorbar(data= model_pp_change, aes(x = Backtransfer_f, ymin = Q25, ymax = Q75, group= Treatment), width = 0, position = position_dodge(0.9),size = 2)+
+  geom_errorbar(data= model_pp_change, aes(x = Backtransfer_f, ymin = Q2.5, ymax = Q975, group= Treatment), width = 0, position = position_dodge(0.9),size = 1.5)+
+  geom_point(data= model_pp_change, aes( x = Backtransfer_f, y = Est, fill= Treatment, colour= Treatment), position = position_dodge(0.9), size = 3, shape= 21, colour = "black")+
+  
+  # geom_bar(aes(x = Backtransfer_f, y = mean_change, group= Treatment, fill = Treatment), stat = "identity", position = position_dodge()) +
+  # geom_errorbar(aes(x = Backtransfer_f, ymin = mean_change - se_change, ymax = mean_change + se_change, group= Treatment), width = 0, position = position_dodge(0.9))+
+  theme_Publication(base_size = 15) + theme(legend.position = "none",
+                                            axis.text.x = element_text(size=10),
+                                            panel.grid.major  = element_blank()) + #scale_x_discrete(labels = c("Betray", "Equalize")) + 
+  
+  ylab("Mean Change")   +  xlab("Back-transfer (BT)")  + scale_colour_Publication() + scale_fill_Publication()#
+g_change_gen <- g_change + facet_wrap(~Genotype)
+df.sigplot = data.frame(x = c("Betray", "Betray"),
+                        xend = c("Equalize", "Betray"),
+                        txt = c("*", ""),
+                        x_pt1 = c("Betray", NA),
+                        x_pt2 = c("Equalize", NA),
+                        y_pt = c(1.4 , NA),
+                        Genotype = model_pp_change$Genotype%>% unique() )
+
+g_change_gen <- g_change_gen + geom_segment(data = df.sigplot, aes(x = x, y = 1.5, xend = xend, yend = 1.5)) +
+  geom_text(data = df.sigplot, aes(label = txt), x = 1.5, y = 1.6, size = 10) +
+  geom_point(data = df.sigplot,aes(x = x_pt1, y = y_pt), shape = 17, size = 3 ) +
+  geom_point(data = df.sigplot,aes(x = x_pt2, y = y_pt), shape = 17, size = 3 )
+
+if (FALSE) {
+  post = posterior_samples(brms_change_z_treatment_genotype_BT_2 )
+  # back to absolute scale 
+  post_no_z <- post*sd(data_beh$Change, na.rm =TRUE)
+  
+  # turn to effect size
+  post <- post %>% mutate(sd_total = sqrt(sigma^2 + sd_ID__Intercept^2 + sd_ID__Trustee_c1^2))
+  post <- post/post$sd_total
+  post_change <- post
+  (post$`b_Treatmentsulpiride:GenotypeA1M:Backtransfer`) %>% sf(1)
+  
+  (post_no_z$`b_Treatmentsulpiride:GenotypeA1M:Backtransfer`) %>% sf(1)
+  
+  (post$`b_Treatmentsulpiride:Backtransfer` +  1/2*post$`b_Treatmentsulpiride:GenotypeA1M:Backtransfer`) %>% sf(1)
+  (post_no_z$`b_Treatmentsulpiride:Backtransfer` +  1/2*post_no_z$`b_Treatmentsulpiride:GenotypeA1M:Backtransfer`) %>% sf(1)
+  
+  (post$`b_Treatmentsulpiride:Backtransfer` ) %>% sf(1)
+  (post_no_z$`b_Treatmentsulpiride:Backtransfer` ) %>% sf(1)
+  
+  (post$`b_Treatmentsulpiride:Backtransfer` +  post$`b_Treatmentsulpiride:GenotypeA1M:Backtransfer`  ) %>% sf(1)
+  (post_no_z$`b_Treatmentsulpiride:Backtransfer` +  post_no_z$`b_Treatmentsulpiride:GenotypeA1M:Backtransfer`  ) %>% sf(1)
+  
+}
+
+
+g_stats_change <- bind_cols(post_change%>% transmute(C_Sul = `b_Treatmentsulpiride:Backtransfer` +  1/2*`b_Treatmentsulpiride:GenotypeA1M:Backtransfer`),
+                            post_change%>% transmute(B_SulXTrials_end =`b_Treatmentsulpiride:Backtransfer`),
+                            post_change%>% transmute(A_SulXTrials =`b_Treatmentsulpiride:Backtransfer` + `b_Treatmentsulpiride:GenotypeA1M:Backtransfer`)
+                            
+) %>% 
+  # convert them to the long format, group, and get the posterior summaries
+  pivot_longer(everything()) %>%
+  group_by(name) %>% 
+  summarise(mean = mean(value),
+            ll   = quantile(value, prob = .025),
+            ul   = quantile(value, prob = .975),
+            lls   = quantile(value, prob = .25),
+            uls   = quantile(value, prob = .75)) %>%  # since the `key` variable is really two variables in one, here we split them up
+  
+  
+  # plot!
+  ggplot(aes(x = mean, xmin = ll, xmax = ul, y = name)) +
+  geom_errorbar(aes(xmin = lls, xmax = uls), size = 1.5,color = "firebrick", width = 0)+
+  geom_vline(xintercept = 0, linetype="dashed") +
+  geom_pointrange(color = "firebrick") +
+  labs(y = NULL) + # subtitle = "Effect sizes (95% and 50% quantiles)", 
+  theme_Publication(base_size = 15) +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(size=12),
+        strip.background = element_rect(fill = "transparent", color = "transparent"),
+        axis.title.x =  element_blank()) +
+  scale_y_discrete(labels = rev(c("(S - P)*BT", "(S - P)*BT in A1+", "(S - P)*BT in A1-")) )
+# plot_grid(g_abs_change_time + theme(legend.position = "none"), g_stats, nrow = 2, rel_heights = c(1,.3)
+
+
+
+
+```
+
+
+```{r change supplementary, tables and lme models}
+
+# for supplementary 
+if (FALSE) {
+  brms_change_z_treatment_genotype %>% fixef()%>% round(3) %>%   write.csv("brms_change_z_treatment_genotype.csv")
+  
+  
+  model_change <- lme(Change_z ~ Treatment*Backtransfer*Genotype*Trustee_c, data = data_beh%>% filter(!is.na(abs_change)), random = ~Trustee_c|ID, method = "REML")
+  model_change %>%  summary() %>%  coef() %>% as.data.frame()%>% round(3) %>%   write.csv("lme_change_z_treatment_genotype.csv")
+  
+  
+  model_change2 <- lme(Change_z ~ Treatment*Backtransfer*Genotype, data = data_beh%>% filter(!is.na(abs_change)), random = ~1|ID, method = "ML")
+  summary(model_change2)
+  anova(model_change, model_change2)
+  data_beh$log_abs_change <- log(1+data_beh$abs_change)
+  model_abs_change <- lme(log_abs_change ~ Treatment*Trial_c, data = data_beh%>% filter(!is.na(abs_change)), random = ~1|ID, method = "ML")
+  summary(model_abs_change)
+  
+  data_beh$log_abs_change <- log(1+data_beh$abs_change)
+  model_abs_change2 <- lme(log_abs_change ~ Treatment*Trial_c*Trustee_c*Genotype, data = data_beh%>% filter(!is.na(abs_change)), random = ~Trustee_c|ID, method = "ML")
+  summary(model_abs_change2)
+  
+  
+  
+}
+#     data = data_beh_SI_analysis)
+```
+# plot reciprocal trials 
+
+```{r reciprocal trials}
+savemodelname = 'brms_rec_treatment_genotype_Trustee_c.rds'
+
+if(!file.exists(paste("Behavioral Models/", savemodelname, sep = ""))){
+  print(paste("estimating model",savemodelname ))
+  
+  mc.rec.model <- brm(rec ~ Treatment*Genotype*Trustee_c + (Trustee_c|ID),
+                      data = data_beh, family = bernoulli(),
+                      prior = c(set_prior("cauchy(0,2)", class = "sd"),
+                                set_prior("normal(0,3)", class = "b"),
+                                set_prior("lkj(2)", class = "cor")),
+                      warmup = 800, iter = 3000, chains =4,
+                      control = list(adapt_delta = 0.95))
+  # summary(mc.baseline)
+  
+  saveRDS(mc.rec.model, file = paste("Behavioral Models/", savemodelname, sep=""))
+} else brms_rec_treatment_genotype_Trustee_c <- readRDS("Behavioral Models/brms_rec_treatment_genotype_Trustee_c.rds")
+
+data_rec_id<- data_beh %>% filter(!is.na(Change)) %>% 
+  group_by(ID, Treatment, Genotype) %>% 
+  summarise(N =n(),
+            Serum = Serum[1],
+            rec_id = (sum(pos_rec)+sum(neg_rec))/N,
+            incon_id = sum(incongruent) /N,
+            absolute_id = sum(absolute)/N) %>% 
+  ungroup()
+
+new_data_rec <- expand.grid(Treatment = data_beh$Treatment%>% unique(), 
+                            Genotype = data_beh$Genotype %>% unique(),
+                            Trustee_c = data_beh$Trustee_c %>% unique())
+model_pp <- fitted(brms_rec_treatment_genotype_Trustee_c, newdata = new_data_rec, re_formula = NA, summary = FALSE)
+
+model_pp %>% glimpse()
+
+model_pp <- (model_pp[,new_data_rec$Trustee_c == "Good"] + model_pp[,new_data_rec$Trustee_c == "Bad"]) / 2 
+model_pp_all <- new_data_rec %>% filter(Trustee_c == "Good")
+model_pp_rec <- model_pp_all %>% mutate(Est = model_pp %>% apply(2, quantile, probs = c(0.5)),
+                                        Q2.5 =model_pp %>% apply(2, quantile, probs = c(0.025)),
+                                        Q25 = model_pp %>% apply(2, quantile, probs = c(0.25)),
+                                        Q75 = model_pp %>% apply(2, quantile, probs = c(0.75)),
+                                        Q975 = model_pp %>% apply(2, quantile, probs = c(0.975)))
+
+
+data_rec_id %>% glimpse()
+g_rec <- ggplot() +
+  geom_point(data = data_rec_id, aes(x = Treatment, y = rec_id, fill= Treatment, colour= Treatment),  alpha = 0.3, position = position_jitterdodge(dodge.width= 0.9, jitter.width = 0.3), shape = 21, colour = "black", size = 2, stroke =1)+
+  
+  geom_errorbar(data= model_pp_rec, aes(x = Treatment, ymin = Q2.5, ymax = Q975, group= Treatment), width = 0, position = position_dodge(0.9),size = 1.5)+
+  geom_point(data= model_pp_rec, aes(x = Treatment, y = Est, fill= Treatment, colour= Treatment), position = position_dodge(0.9), size = 3, shape= 21, colour = "black")+
+  
+  theme_Publication(base_size = 15) + theme(legend.position = "none",
+                                            axis.text.x = element_text(size=12),
+                                            panel.grid.major  = element_blank()) + #scale_x_discrete(labels = c("Betray", "Equalize")) + 
+  
+  ylab("Proportion of\nreciprocal trials")   +  xlab(" ")  + scale_x_discrete(labels = c("P", "S"))+  scale_colour_Publication() + scale_fill_Publication()#
+g_rec_gen <- g_rec + facet_wrap(~Genotype)
+df.sigplot = data.frame(x = c("control", "control"),
+                        xend = c("sulpiride", "control"),
+                        txt = c("*", ""),
+                        Genotype = model_pp_rec$Genotype%>% unique() )
+g_rec_gen <- g_rec_gen + geom_segment(data = df.sigplot, aes(x = x, y = 0.85, xend = xend, yend = 0.85)) +
+  geom_text(data = df.sigplot, aes(label = txt), x = 1.5, y = 0.86, size = 10)
+
+
+if (FALSE) {
+  post = posterior_samples(brms_rec_treatment_genotype_Trustee_c )
+  # back to absolute scale 
+  
+  
+  # turn to effect size
+  post <- post %>% mutate(sd_total = sqrt(sd_ID__Intercept^2 + sd_ID__Trustee_c1^2))
+  post <- post/post$sd_total
+  post_rec <- post
+  (post$b_Treatmentsulpiride +  1/2*post$`b_Treatmentsulpiride:GenotypeA1M`) %>% sf(1)
+  (post$b_Treatmentsulpiride) %>% sf(1)
+  (post$b_Treatmentsulpiride +  post$`b_Treatmentsulpiride:GenotypeA1M`) %>% sf(1)
+  (post$`b_Treatmentsulpiride:GenotypeA1M`) %>% sf(1)
+  
+}
+
+
+g_stats_rec <- bind_cols(post_rec%>% transmute(C_Sul = b_Treatmentsulpiride +  1/2*`b_Treatmentsulpiride:GenotypeA1M`),
+                         post_rec%>% transmute(B_Sul =b_Treatmentsulpiride),
+                         post_rec%>% transmute(A_Sul =b_Treatmentsulpiride +  `b_Treatmentsulpiride:GenotypeA1M`)
+                         
+) %>% 
+  # convert them to the long format, group, and get the posterior summaries
+  pivot_longer(everything()) %>%
+  group_by(name) %>% 
+  summarise(mean = mean(value),
+            ll   = quantile(value, prob = .025),
+            ul   = quantile(value, prob = .975),
+            lls   = quantile(value, prob = .25),
+            uls   = quantile(value, prob = .75)) %>%  # since the `key` variable is really two variables in one, here we split them up
+  
+  
+  # plot!
+  ggplot(aes(x = mean, xmin = ll, xmax = ul, y = name)) +
+  geom_errorbar(aes(xmin = lls, xmax = uls), size = 1.5,color = "firebrick", width = 0)+
+  geom_vline(xintercept = 0, linetype="dashed") +
+  geom_pointrange(color = "firebrick") +
+  labs(y = NULL) + # subtitle = "Effect sizes (95% and 50% quantiles)", 
+  theme_Publication(base_size = 15) +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(size=12, ),
+        strip.background = element_rect(fill = "transparent", color = "transparent"),
+        axis.title.x =  element_blank()) +
+  scale_y_discrete(labels = rev(c("S - P", "S - P in A1+", "S - P in A1-")) ) +
+  scale_x_continuous(breaks = c(0, 0.4,0.8))
+# plot_grid(g_abs_change_time + theme(legend.position = "none"), g_stats, nrow = 2, rel_heights = c(1,.3)
+
+
+```
+
+```{r mistake trials}
+# for figure on gamma (Fig 4)
+savemodelname = 'brms_incon_treatment_genotype_Trustee_c.rds'
+
+if(!file.exists(paste("Behavioral Models/", savemodelname, sep = ""))){
+  print(paste("estimating model",savemodelname ))
+  
+  brms_incon_treatment_genotype_Trustee_c <- brm(incongruent ~ Treatment*Genotype*Trustee_c + (Trustee_c|ID),
+                                                 data = data_beh, family = bernoulli(),
+                                                 prior = c(set_prior("cauchy(0,2)", class = "sd"),
+                                                           set_prior("normal(0,3)", class = "b"),
+                                                           set_prior("lkj(2)", class = "cor")),
+                                                 warmup = 800, iter = 3000, chains =4,
+                                                 control = list(adapt_delta = 0.95))
+  # summary(mc.baseline)
+  
+  saveRDS(mc.incon.model, file = paste("Behavioral Models/", savemodelname, sep=""))
+}else  brms_incon_treatment_genotype_Trustee_c <- readRDS("Behavioral Models/brms_incon_treatment_genotype_Trustee_c.rds")
+
+data_rec_id<- data_beh %>% filter(!is.na(Change)) %>% 
+  group_by(ID, Treatment, Genotype) %>% 
+  summarise(N =n(),
+            Serum = Serum[1],
+            rec_id = (sum(pos_rec)+sum(neg_rec))/N,
+            incon_id = sum(incongruent) /N,
+            absolute_id = sum(absolute)/N) %>% 
+  ungroup()
+
+new_data_rec <- expand.grid(Treatment = data_beh$Treatment%>% unique(), 
+                            Genotype = data_beh$Genotype %>% unique(),
+                            Trustee_c = data_beh$Trustee_c %>% unique())
+model_pp <- fitted(brms_incon_treatment_genotype_Trustee_c, newdata = new_data_rec, re_formula = NA, summary = FALSE)
+
+model_pp <- (model_pp[,new_data_rec$Trustee_c == "Good"] + model_pp[,new_data_rec$Trustee_c == "Bad"]) / 2 
+
+model_pp_all <- new_data_rec %>% filter(Trustee_c == "Good")
+model_pp_rec <- model_pp_all %>% mutate(Est = model_pp %>% apply(2, quantile, probs = c(0.5)),
+                                        Q2.5 =model_pp %>% apply(2, quantile, probs = c(0.025)),
+                                        Q25 = model_pp %>% apply(2, quantile, probs = c(0.25)),
+                                        Q75 = model_pp %>% apply(2, quantile, probs = c(0.75)),
+                                        Q975 = model_pp %>% apply(2, quantile, probs = c(0.975)))
+
+
+data_rec_id %>% glimpse()
+g_incon<- ggplot() +
+  geom_point(data = data_rec_id, aes(x = Treatment, y = incon_id, fill= Treatment, colour= Treatment),  alpha = 0.3, position = position_jitterdodge(dodge.width= 0.9, jitter.width = 0.5), shape = 21, colour = "black", size = 2, stroke =1)+
+  
+  
+  geom_errorbar(data= model_pp_rec, aes(x = Treatment, ymin = Q2.5, ymax = Q975, group= Treatment), width = 0, position = position_dodge(0.9),size = 1.5)+
+  geom_point(data= model_pp_rec, aes(x = Treatment, y = Est, fill= Treatment, colour= Treatment), position = position_dodge(0.9), size = 3, shape= 21, colour = "black")+
+  
+  theme_Publication(base_size = 15) + theme(legend.position = "none",
+                                            axis.text.x = element_blank(),
+                                            axis.ticks.x = element_blank(),
+                                            axis.title.x = element_blank(),
+                                            panel.grid.major  = element_blank()) + #scale_x_discrete(labels = c("Betray", "Equalize")) + 
+  
+  ylab("Proportion of\nmistake trials")   +   scale_colour_Publication() + scale_fill_Publication()#
+g_incon_gen <- g_incon + facet_wrap(~Genotype)
+df.sigplot = data.frame(x = c("control", "control"),
+                        xend = c("control", "sulpiride"),
+                        txt = c("", "*"),
+                        Genotype = model_pp_rec$Genotype%>% unique() )
+g_incon_gen <- g_incon_gen + geom_segment(data = df.sigplot, aes(x = x, y = 0.35, xend = xend, yend = 0.35)) +
+  geom_text(data = df.sigplot, aes(label = txt), x = 1.5, y = 0.36, size = 10)
+
+
+if (FALSE) {
+  post = posterior_samples(brms_incon_treatment_genotype_Trustee_c )
+  # back to absolute scale 
+  
+  
+  # turn to effect size
+  post <- post %>% mutate(sd_total = sqrt(sd_ID__Intercept^2 + sd_ID__Trustee_c1^2))
+  post <- post/post$sd_total
+  post_incon <- post
+  (post$b_Treatmentsulpiride +  1/2*post$`b_Treatmentsulpiride:GenotypeA1M`) %>% sf(1)
+  (post$b_Treatmentsulpiride) %>% sf(1)
+  (post$b_Treatmentsulpiride +  post$`b_Treatmentsulpiride:GenotypeA1M`) %>% sf(1)
+   (post$`b_Treatmentsulpiride:GenotypeA1M`) %>% sf(1)
+  
+  
+}
+
+
+g_stats_incon <- bind_cols(post_incon%>% transmute(C_Sul = b_Treatmentsulpiride +  1/2*`b_Treatmentsulpiride:GenotypeA1M`),
+                           post_incon%>% transmute(B_Sul =b_Treatmentsulpiride),
+                           post_incon%>% transmute(A_Sul =b_Treatmentsulpiride +  `b_Treatmentsulpiride:GenotypeA1M`)
+                           
+) %>% 
+  # convert them to the long format, group, and get the posterior summaries
+  pivot_longer(everything()) %>%
+  group_by(name) %>% 
+  summarise(mean = mean(value),
+            ll   = quantile(value, prob = .025),
+            ul   = quantile(value, prob = .975),
+            lls   = quantile(value, prob = .25),
+            uls   = quantile(value, prob = .75)) %>%  # since the `key` variable is really two variables in one, here we split them up
+  
+  
+  # plot!
+  ggplot(aes(x = mean, xmin = ll, xmax = ul, y = name)) +
+  geom_errorbar(aes(xmin = lls, xmax = uls), size = 1.5,color = "firebrick", width = 0)+
+  geom_vline(xintercept = 0, linetype="dashed") +
+  geom_pointrange(color = "firebrick") +
+  labs(y = NULL) + # subtitle = "Effect sizes (95% and 50% quantiles)", 
+  theme_Publication(base_size = 15) +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(size=12, ),
+        strip.background = element_rect(fill = "transparent", color = "transparent"),
+        axis.title.x =  element_blank()) +
+  scale_y_discrete(labels = rev(c("S - P", "S - P in A1+", "S - P in A1-")) ) 
+
+```
+
+
+```{r reciprocal and mistake trials stats}
+
+# reciprocal trials ####
+
+savemodelname = 'brms_rec_logserum_genotype_trustee_c.rds'
+if(!file.exists(paste("Behavioral Models/", savemodelname, sep = ""))){
+  print(paste("estimating model",savemodelname ))
+  
+  brms_rec_logserum_genotype_trustee_c <- brm(rec ~ logserum_s*Genotype*Trustee_c + (Trustee_c|ID),
+                                              data = data_sul, family = bernoulli(),
+                                              prior = c(set_prior("cauchy(0,2)", class = "sd"),
+                                                        set_prior("normal(0,3)", class = "b"),
+                                                        set_prior("lkj(2)", class = "cor")),
+                                              warmup = 800, iter = 3000, chains =4,
+                                              control = list(adapt_delta = 0.95))
+  # summary(mc.baseline)
+  
+  saveRDS(mc.rec.model, file = paste("Behavioral Models/", savemodelname, sep=""))
+}else brms_rec_logserum_genotype_trustee_c <- readRDS("Behavioral Models/brms_rec_logserum_genotype_trustee_c.rds")  
+
+brms_rec_treatment_genotype_Trustee_c %>% fixef()%>% round(3) %>%   write.csv("brms_rec_treatment_genotype_Trustee_c.csv")
+
+post_rec <- posterior_samples(brms_rec_logserum_genotype_trustee_c)
+post_rec$b_logserum_s%>% sf(1)
+brms_rec_logserum_genotype_trustee_c %>% fixef()%>% round(3) %>%   write.csv("brms_rec_logserum_genotype_trustee_c.csv")
+
+model_rec <- glmer(rec ~ Treatment*Genotype*Trustee_c + (Trustee_c|ID), data = data_beh%>% filter(!is.na(abs_change)), family = binomial())
+
+data_serum_rec = data_beh%>% filter(!is.na(abs_change), Treatment == "sulpiride")
+data_serum_rec$logserum_s = ave(log(data_serum_rec$Serum), FUN = scale)
+
+
+data_beh$incongruent %>% hist()
+model_incon <- glmer(incongruent ~ Treatment*Genotype + (1|ID), data = data_beh%>% filter(!is.na(abs_change)), family = binomial())
+
+model_rec_serum <- glmer(rec ~ logserum_s*Genotype*Trustee_c + (Trustee_c|ID), data = data_serum_rec, family = binomial())
+summary(model_rec_serum)
+
+
+
+data_group_sul = data_group %>% filter(drug == "sulpiride")
+data_group_sul$logserum_s = data_group_sul$serum %>% log() %>% ave(FUN = scale)
+
+data_rec_id$Serum_s = ave(data_rec_id$Serum, FUN = scale)
+mod_rec_ser <- lm(data= data_rec_id%>% filter(Treatment == "sulpiride"),rec_id ~ Serum_s*Genotype*Trustee)
+mod_rec_ser%>% summary()
+model_rec %>%  summary() %>%  coef() %>% as.data.frame()%>% round(3) %>%   write.csv("lme_rec_z_treatment_genotype_trustee.csv")
+
+# mistake (incongruent) trials ####
+savemodelname = 'brms_incon_logserum_genotype_trustee_c.rds'
+if(!file.exists(paste("Behavioral Models/", savemodelname, sep = ""))){
+  print(paste("estimating model",savemodelname ))
+  
+  model_incon_serum <- brm(incongruent ~ logserum_s*Genotype*Trustee_c + (Trustee_c|ID),
+                        data = data_sul, family = bernoulli(),
+                        prior = c(set_prior("cauchy(0,2)", class = "sd"),
+                                  set_prior("normal(0,3)", class = "b"),
+                                  set_prior("lkj(2)", class = "cor")),
+                        warmup = 800, iter = 3000, chains =4,
+                        control = list(adapt_delta = 0.95))
+  # summary(mc.baseline)
+  
+  saveRDS(model_incon_serum, file = paste("Behavioral Models/", savemodelname, sep=""))
+}else model_incon_serum <-readRDS(file = paste("Behavioral Models/", savemodelname, sep=""))
+model_incon_serum
+
+post_incon <- posterior_samples(model_incon_serum)
+post_incon$b_logserum_s%>% sf(1)
+(post_incon$b_logserum_s + post_incon$`b_logserum_s:GenotypeA1M`) %>% sf(1)
+
+# glmer 
+model_rec_serum <- glmer(rec ~ Serum_s*Genotype*Trustee + (Trustee|ID), data = data_serum_rec, family = binomial())
+summary(model_rec_serum)
+
+model_incon_serum <- glmer(incongruent ~ Serum_s*Genotype*Trustee + (1|ID), data = data_serum_rec, family = binomial())
+summary(model_incon_serum)
+
+```
+
+```{r Figure 1}
+title <- ggdraw() + 
+  draw_label(
+    "Effect sizes (means with 50% and 95% CrI)",
+    fontface = 'bold',
+    x = 0,
+    hjust = -0.7
+  ) 
+g_rtg_blank <- ggplot() + theme_foundation() + theme(panel.background = element_rect(colour = NA),
+                                                     plot.background = element_rect(colour = NA),
+                                                     panel.border = element_rect(colour = NA))
+
+g_figure1 <- plot_grid(
+  plot_grid(g_rtg_blank, g_abs_change_time, g_rec_gen, nrow = 1, labels="auto"),
+  plot_grid(g_rtg_blank,g_stats, g_stats_rec, nrow = 1, rel_widths = c(1,1.1,1)),
+  plot_grid(g_rtg_blank, title, nrow= 1, rel_widths = c(1,3)),
+  nrow = 3,
+  
+  rel_heights = c(1,0.4,0.1)
+)
+# title
+g_figure1
+g_figure1_extended <- plot_grid(ggplot()+theme_Publication(), g_figure1, ncol = 2, rel_widths = c(0.3,1))
+
+ggsave2(plot = g_figure1, filename = "Figure1.png", units = "cm", width = 17 )
+plot_grid(
+  g_abs_change_time,
+  g_stats,
+  nrow =  2,
+  rel_heights = c(1,0.4))
+
+```
+
+
+
+
+
+# computational modelling 
+
+```{r load script  for the running the models, echo=FALSE, warning= FALSE, massage = FALSE}
+# Warning: this can take time. An already estimated model is available by request from the authors (nace.mikus@univie.ac.at)
+
+source("run_stan_models_wrapper_function.R") # defining the wrapper function 
+
+# run the hgf model with gamma in the response model
+run_model_fit("Stan_scripts/tg_hgf_gamma.stan", "Model_results/M_fit_tg_hgf_gamma.rds", 3000)
+# run the hgf model without gamma in the response model
+run_model_fit("Stan_scripts/tg_hgf.stan", "Model_results/M_fit_tg_hgf.rds", 3000)
+# run the rw model 
+run_model_fit("Stan_scripts/tg_rw.stan", "Model_results/M_fit_tg_rw.rds", 3000)
+
+```
+
+```{r load stan model stats, echo=FALSE, warning= FALSE, massage = FALSE}
+
+
+fit_model_gen <- readRDS("Model_results/M_fit_tg_hgf_gamma.rds")
+
+
+data_group$om1 <- get_posterior_mean(fit_model_gen, pars=c('om_good'))[,5]
+
+data_group$om2 <- get_posterior_mean(fit_model_gen, pars=c('om_bad'))[,5]
+data_group$om_mean <- 1/2*(data_group$om1 + data_group$om2)
+data_group$om_diff <- data_group$om1 - data_group$om2
+data_group$mu0 <- get_posterior_mean(fit_model_gen, pars=c('mu0'))[,5]
+data_group$noise <- get_posterior_mean(fit_model_gen, pars=c('noise'))[,5]
+data_group$gam <- get_posterior_mean(fit_model_gen, pars=c('gam'))[,5]
+
+if (FALSE) {
+  pars_all_model <- grep("^beta_", names(fit_model_gen), value = T)
+  pars_all_model <- pars_all_model[!grepl("^beta_pr", pars_all_model)]
+  pars_all_model <- c('mu_p[2]', pars_all_model)
+  pars_all_model_labels <- pars_all_model
+  pars_all_model_labels[1]<- c("trustee_volatility")
+  pars_all_model_labels[2:7] <- sapply(pars_all_model_labels[2:7], function(x) x = paste(x[1], "_volatility", sep = ""))
+  pars_all_model_labels <- gsub("beta_", "", pars_all_model_labels)
+  
+  pars_all_model_labels[c(8,9,14)] <-  sapply(pars_all_model_labels[c(8,9,14)], function(x) x = paste("sul_", x[1], sep = ""))
+  pars_all_model_labels <- rev(pars_all_model_labels)
+  
+  model_plot <- stan_plot(fit_model_gen, pars= pars_all_model) +  geom_vline(xintercept=0, size=0.5, alpha=0.5, linetype=2)
+  model_plot + scale_y_discrete(limits = rev(pars_all_model), labels=pars_all_model_labels)
+}
+
+if (FALSE) {
+  pars_beta <- grep("^beta_", names(fit_model_gen), value = T)
+  pars_sigma <- grep("^sigma", names(fit_model_gen), value = T)
+  
+  pars_beta<- c(pars_beta, pars_sigma)
+  # pars_all_model <- pars_all_model[!grepl("^beta_pr", pars_all_model)]
+  Pars_posterior_samples <- extract(fit_model_gen, pars = pars_beta )
+  sigma_volatility =  Pars_posterior_samples$`sigma[1]`
+  sigma_volatility_trustee =  Pars_posterior_samples$`sigma[2]`
+  sigma_noise = Pars_posterior_samples$`sigma[3]`
+  sigma_gam = Pars_posterior_samples$`sigma[5]`
+  sigma_mu0 = Pars_posterior_samples$`sigma[4]`
+  sd_total = sqrt(sigma_volatility^2 + sigma_volatility_trustee^2)
+  
+  
+  ## main effect of sulpiride on belief stability
+  (Pars_posterior_samples$beta_sul+ 1/2*Pars_posterior_samples$beta_sul_ankk)  %>% sf(1)
+  ( (Pars_posterior_samples$beta_sul+ 1/2*Pars_posterior_samples$beta_sul_ankk)/sd_total ) %>% sf(1)
+  d_sul = ( (Pars_posterior_samples$beta_sul+ 1/2*Pars_posterior_samples$beta_sul_ankk)/sd_total ) 
+  
+  ## effect of sulpiride on belief stability in A1+ 
+  Pars_posterior_samples$beta_sul %>% sf(1)
+  
+  (Pars_posterior_samples$beta_sul/sd_total) %>% sf(1)
+  d_sul_a1p =  (Pars_posterior_samples$beta_sul/sd_total) 
+  
+  ## effect of sulpiride on belief stability in A1- 
+  (Pars_posterior_samples$beta_sul+ Pars_posterior_samples$beta_sul_ankk)  %>% sf(1)
+  ( (Pars_posterior_samples$beta_sul+ Pars_posterior_samples$beta_sul_ankk)/sd_total ) %>% sf(1)
+  d_sul_a1m =   ( (Pars_posterior_samples$beta_sul+ Pars_posterior_samples$beta_sul_ankk)/sd_total )
+  ## interaction effect of sulpiride * genotype on belief stability
+  (Pars_posterior_samples$beta_sul_ankk)  %>% sf(1)
+  ( (Pars_posterior_samples$beta_sul_ankk)/sd_total ) %>% sf(1)
+  d_sul_gene <- ( (Pars_posterior_samples$beta_sul_ankk)/sd_total )
+  
+  ## interaction effect of sulpiride on belief stability in A1+ trustees 
+  Pars_posterior_samples$beta_sul_trustee %>% sf(1)
+  
+  ## effect of sulpiride on belief stability in A1+ for good trustee 
+  
+  (Pars_posterior_samples$beta_sul + 1/2*Pars_posterior_samples$beta_sul_trustee) %>% sf(1)
+  ((Pars_posterior_samples$beta_sul + 1/2*Pars_posterior_samples$beta_sul_trustee) /sd_total) %>% sf(1)
+  d_sul_a1p_good = ((Pars_posterior_samples$beta_sul + 1/2*Pars_posterior_samples$beta_sul_trustee) /sd_total) 
+  
+  ## effect of sulpiride on belief stability in A1+ for bad trustee 
+  
+  (Pars_posterior_samples$beta_sul - 1/2*Pars_posterior_samples$beta_sul_trustee) %>% sf(1)
+  ((Pars_posterior_samples$beta_sul - 1/2*Pars_posterior_samples$beta_sul_trustee)/sd_total) %>% sf(1)
+  d_sul_a1p_bad = ((Pars_posterior_samples$beta_sul - 1/2*Pars_posterior_samples$beta_sul_trustee) /sd_total) 
+  
+  
+  ## interaction effect of sulpiride on belief stability in A1- trustees 
+  (Pars_posterior_samples$beta_sul_trustee+ Pars_posterior_samples$beta_sul_ankk_trustee) %>% sf(1)
+  
+  ## effect of sulpiride on belief stability in A1- for bad trustee 
+  (Pars_posterior_samples$beta_sul+ Pars_posterior_samples$beta_sul_ankk -  1/2*(Pars_posterior_samples$beta_sul_trustee + Pars_posterior_samples$beta_sul_ankk_trustee))  %>% sf(1)
+  ((Pars_posterior_samples$beta_sul+ Pars_posterior_samples$beta_sul_ankk -  1/2*(Pars_posterior_samples$beta_sul_trustee + Pars_posterior_samples$beta_sul_ankk_trustee))/sd_total ) %>% sf(1)
+   ## effect of sulpiride on belief stability in A1- for good trustee 
+  (Pars_posterior_samples$beta_sul+ Pars_posterior_samples$beta_sul_ankk +  1/2*(Pars_posterior_samples$beta_sul_trustee + Pars_posterior_samples$beta_sul_ankk_trustee))  %>% sf(1)
+  ((Pars_posterior_samples$beta_sul+ Pars_posterior_samples$beta_sul_ankk +  1/2*(Pars_posterior_samples$beta_sul_trustee + Pars_posterior_samples$beta_sul_ankk_trustee))/sd_total ) %>% sf(1)
+  
+  ## interaction effect of sulpiride on belief stability in A1+ trustees 
+  
+  (Pars_posterior_samples$beta_sul_trustee) %>% sf(1)
+  ((Pars_posterior_samples$beta_sul_trustee)/sd_total) %>% sf(1)
+  d_sul_a1p_trustee=((Pars_posterior_samples$beta_sul_trustee)/sd_total)
+  
+  (Pars_posterior_samples$beta_sul_trustee + Pars_posterior_samples$beta_sul_ankk_trustee) %>% sf(1)
+  ## main effect of sulpiride on noise 
+  (Pars_posterior_samples$beta_noise + 1/2*Pars_posterior_samples$beta_sul_ankk_noise) %>% sf(1)
+  d_eta <- ((Pars_posterior_samples$beta_noise + 1/2*Pars_posterior_samples$beta_sul_ankk_noise)/sigma_noise) 
+  d_eta %>% sf(1)
+  
+  ## main effect of sulpiride on noise in A1+ 
+  Pars_posterior_samples$beta_noise %>% sf(1)
+  d_eta_a1p <- (Pars_posterior_samples$beta_noise/sigma_noise) 
+  d_eta_a1p %>% sf(1)
+  
+  ## main effect of sulpiride on noise in A1- 
+  (Pars_posterior_samples$beta_noise + Pars_posterior_samples$beta_sul_ankk_noise) %>% sf(1)
+  d_eta_a1m <- ((Pars_posterior_samples$beta_noise + Pars_posterior_samples$beta_sul_ankk_noise)/sigma_noise) 
+  d_eta_a1m %>% sf(1)
+  
+  
+  ## effect of sulpiride on mu0 in A1+ 
+  d_mu0_a1p <- Pars_posterior_samples$beta_mu0 /sigma_mu0
+  d_mu0_a1p %>% sf(1)
+  # sigma_gamma =  Pars_posterior_samples$`sigma[5]`
+  # (Pars_posterior_samples$beta_gam/sigma_gamma) %>% quantile(probs = c(0.025,0.5,0.975)) %>% round(2)
+  ## effect of sulpiride on mu0  in a1- 
+  d_mu0_a1m <- (Pars_posterior_samples$beta_mu0 + Pars_posterior_samples$beta_sul_ankk_mu0)/sigma_mu0
+  d_mu0_a1m %>% sf(1)
+  ## effect of sulpiride on mu0  
+  d_mu0 <- (Pars_posterior_samples$beta_mu0 + 1/2*Pars_posterior_samples$beta_sul_ankk_mu0)/sigma_mu0
+  d_mu0 %>% sf(1)
+  
+  
+  #
+  ## effect of sulpiride on gamma
+  (Pars_posterior_samples$beta_gam + 1/2*Pars_posterior_samples$beta_sul_ankk_gam) %>% sf(1)
+  d_gam <- ((Pars_posterior_samples$beta_gam + 1/2*Pars_posterior_samples$beta_sul_ankk_gam)/sigma_gam) 
+  d_gam %>% sf(1)
+  
+  ## effect of sulpiride on gamma in A1-
+  (Pars_posterior_samples$beta_gam + Pars_posterior_samples$beta_sul_ankk_gam) %>% sf(1)
+  d_gam_a1m<-  ((Pars_posterior_samples$beta_gam + Pars_posterior_samples$beta_sul_ankk_gam)/sigma_gam) 
+  d_gam_a1m %>% sf(1)      
+  
+  
+  ## effect of sulpiride on gamma in A1+
+  (Pars_posterior_samples$beta_gam) %>% sf(1)
+  d_gam_a1p<-  ((Pars_posterior_samples$beta_gam)/sigma_gam) 
+  d_gam_a1p %>% sf(1)      
+  
+  ## interaction effect
+  d_gam_sul_gene <- (Pars_posterior_samples$beta_sul_ankk_gam)/sigma_gam
+  d_gam_sul_gene %>% sf(1)
+  
+  ## effect of genotype on gamma
+  (1/2*(Pars_posterior_samples$beta_sul_ankk_gam) + Pars_posterior_samples$beta_ankk) %>% sf(1)
+  (0*(Pars_posterior_samples$beta_sul_ankk_gam) + Pars_posterior_samples$beta_ankk) %>% sf(1)
+  (1*(Pars_posterior_samples$beta_sul_ankk_gam) + Pars_posterior_samples$beta_ankk) %>% sf(1)
+  
+  d_gam <- ((Pars_posterior_samples$beta_gam + 1/2*Pars_posterior_samples$beta_sul_ankk_gam)/sigma_gam) 
+  d_gam %>% sf(1)
+  
+  
+  ## effect of genotype in controls on volatility  
+  
+  (Pars_posterior_samples$beta_ankk)  %>% quantile(probs = c(0.025,0.5,0.975)) %>% round(2)  
+  
+  ## effect of genotype in controls on mu0 
+  (Pars_posterior_samples$beta_ankk_mu0)  %>% quantile(probs = c(0.025,0.5,0.975)) %>% round(2)  
+  ## effect of genotype in controls on noise 
+  (Pars_posterior_samples$beta_ankk_noise)  %>% quantile(probs = c(0.025,0.5,0.975)) %>% round(2)  
+  
+  ## effect of genotype in controls on gamma 
+  (Pars_posterior_samples$beta_ankk_gam)  %>% quantile(probs = c(0.025,0.5,0.975)) %>% round(2)  
+  
+  data_group$ankk %>% glimpse()
+  
+  ## main effecot 
+  # plot some posterior distributions
+  
+  gapg <- tibble(samples = post$`b_Trial:Treatmentsulpride`) %>% ggplot(aes(samples)) + geom_density(fill = "gray")  + theme_Publication(base_size=15) + geom_vline(xintercept = 0) + xlab("Good Trustee") + ylab("A1+ subjects")
+  
+  
+  
+}
+
+
+CI_outer = 0.95; # 99 CrI
+g_stats_om_ankk <- bind_cols(c_d_sul = d_sul,
+                             b_d_sul_a1p = d_sul_a1p,
+                             a_d_sul_a1m = d_sul_a1m) %>% 
+  # convert them to the long format, group, and get the posterior summaries
+  pivot_longer(everything()) %>%
+  group_by(name) %>% 
+  summarise(mean = mean(value),
+            ll   = quantile(value, prob = (1-CI_outer)/2),
+            ul   = quantile(value, prob = 1- (1-CI_outer)/2),
+            lls   = quantile(value, prob = .25),
+            uls   = quantile(value, prob = .75)) %>%  
+  ggplot(aes(x = mean, xmin = ll, xmax = ul, y = name)) +
+  geom_errorbar(aes(xmin = lls, xmax = uls), size = 1.5,color = "firebrick", width = 0)+
+  geom_vline(xintercept = 0,  linetype = "dashed") +
+  geom_pointrange(color = "firebrick") +
+  labs( y = NULL) + # subtitle = "Effect sizes (95% and 50% quantiles)",
+  theme_Publication(base_size = 15) +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(size=12),
+        strip.background = element_rect(fill = "transparent", color = "transparent"),
+        axis.title.x =  element_blank()) +
+  scale_y_discrete(labels = rev(c("S - P", "S - P in A1+", "S - P in A1-")) )
+# plot_grid(g_abs_change_time + theme(legend.position = "none"), g_stats, nrow = 2, rel_heights = c(1,.3)
+
+g_stats_om_a1_p_trustee <- bind_cols(c_d_sul_bad = d_sul_a1p_bad,
+                                     b_d_sul_good = d_sul_a1p_good,
+                                     a_d_sul_trustee = d_sul_a1p_trustee) %>% 
+  # convert them to the long format, group, and get the posterior summaries
+  pivot_longer(everything()) %>%
+  group_by(name) %>% 
+  summarise(mean = mean(value),
+            ll   = quantile(value, prob = (1-CI_outer)/2),
+            ul   = quantile(value, prob = 1- (1-CI_outer)/2),
+            lls   = quantile(value, prob = .25),
+            uls   = quantile(value, prob = .75)) %>%  
+  ggplot(aes(x = mean, xmin = ll, xmax = ul, y = name)) +
+  geom_errorbar(aes(xmin = lls, xmax = uls), size = 1.5,color = "firebrick", width = 0)+
+  geom_vline(xintercept = 0,  linetype = "dashed") +
+  geom_pointrange(color = "firebrick") +
+  labs( y = NULL) + # subtitle = "Effect sizes (95% and 50% quantiles)",
+  theme_Publication(base_size = 15) +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(size=12),
+        strip.background = element_rect(fill = "transparent", color = "transparent"),
+        axis.title.x =  element_blank()) +
+  scale_y_discrete(labels = rev(c("S - P in A1+ vs bad T", "S - P in A1+ vs good T", "(S - P)*(good - bad)")))
+
+# plot_grid(g_abs_change_time + theme(legend.position = "none"), g_stats, nrow = 2, rel_heights = c(1,.3)
+
+g_stats_eta_ankk <- bind_cols(c = d_eta,
+                              b = d_eta_a1p,
+                              a = d_eta_a1m) %>% 
+  # convert them to the long format, group, and get the posterior summaries
+  pivot_longer(everything()) %>%
+  group_by(name) %>% 
+  summarise(mean = mean(value),
+            ll   = quantile(value, prob = (1-CI_outer)/2),
+            ul   = quantile(value, prob = 1- (1-CI_outer)/2),
+            lls   = quantile(value, prob = .25),
+            uls   = quantile(value, prob = .75)) %>%  
+  ggplot(aes(x = mean, xmin = ll, xmax = ul, y = name)) +
+  geom_errorbar(aes(xmin = lls, xmax = uls), size = 1.5,color = "firebrick", width = 0)+
+  geom_vline(xintercept = 0,  linetype = "dashed") +
+  geom_pointrange(color = "firebrick") +
+  labs( y = NULL) + # subtitle = "Effect sizes (95% and 50% quantiles)",
+  theme_Publication(base_size = 15) +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(size=12),
+        strip.background = element_rect(fill = "transparent", color = "transparent"),
+        axis.title.x =  element_blank()) +
+  scale_y_discrete(labels = rev(c("S - P", "S - P in A1+", "S - P in A1-")) )
+# plot_grid(g_abs_change_time + theme(legend.position = "none"), g_stats, nrow = 2, rel_heights = c(1,.3)
+
+g_stats_gam_ankk <- bind_cols(c = d_gam,
+                              b = d_gam_a1p,
+                              a = d_gam_a1m) %>% 
+  # convert them to the long format, group, and get the posterior summaries
+  pivot_longer(everything()) %>%
+  group_by(name) %>% 
+  summarise(mean = mean(value),
+            ll   = quantile(value, prob = (1-CI_outer)/2),
+            ul   = quantile(value, prob = 1- (1-CI_outer)/2),
+            lls   = quantile(value, prob = .25),
+            uls   = quantile(value, prob = .75)) %>%  
+  ggplot(aes(x = mean, xmin = ll, xmax = ul, y = name)) +
+  geom_errorbar(aes(xmin = lls, xmax = uls), size = 1.5,color = "firebrick", width = 0)+
+  geom_vline(xintercept = 0,  linetype = "dashed") +
+  geom_pointrange(color = "firebrick") +
+  labs( y = NULL) + # subtitle = "Effect sizes (95% and 50% quantiles)",
+  theme_Publication(base_size = 15) +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(size=12),
+        strip.background = element_rect(fill = "transparent", color = "transparent"),
+        axis.title.x =  element_blank()) +
+  scale_y_discrete(labels = rev(c("S - P", "S - P in A1+", "S - P in A1-")) )
+
+g_stats_mu0_ankk <- bind_cols(c = d_mu0_gene,
+                              b = d_mu0_a1p,
+                              a = d_mu0_a1m) %>% 
+  # convert them to the long format, group, and get the posterior summaries
+  pivot_longer(everything()) %>%
+  group_by(name) %>% 
+  summarise(mean = mean(value),
+            ll   = quantile(value, prob = (1-CI_outer)/2),
+            ul   = quantile(value, prob = 1- (1-CI_outer)/2),
+            lls   = quantile(value, prob = .25),
+            uls   = quantile(value, prob = .75)) %>%  
+  ggplot(aes(x = mean, xmin = ll, xmax = ul, y = name)) +
+  geom_errorbar(aes(xmin = lls, xmax = uls), size = 1.5,color = "firebrick", width = 0)+
+  geom_vline(xintercept = 0,  linetype = "dashed") +
+  geom_pointrange(color = "firebrick") +
+  labs( y = NULL) + # subtitle = "Effect sizes (95% and 50% quantiles)",
+  theme_Publication(base_size = 15) +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(size=12),
+        strip.background = element_rect(fill = "transparent", color = "transparent"),
+        axis.title.x =  element_blank()) +
+  scale_y_discrete(labels = rev(c("S - P", "S - P in A1+", "S - P in A1-")) )
+# plot_grid(g_abs_change_time + theme(legend.position = "none"), g_stats, nrow = 2, rel_heights = c(1,.3)
+
+```
+
+```{r free parameter graphs, fig.width = 15, fig.height = 7, echo=FALSE, warning= FALSE}
+
+
+g_gen_om_mean <- ggplot(data = data_group, aes(x = drug, y = om_mean))+  # group = ID, linetype = Genotype)) 
+  # geom_violin(aes(fill = drug))+
+  geom_boxplot(aes(fill = drug), width=0.5, color="black", outlier.colour = NA)+
+  # stat_summary(fun.y=mean, geom="point", shape=20, size=14, color="red", fill="red") + 
+  geom_point(aes(fill = drug, colour = drug),  alpha = 0.3, position = position_jitterdodge(dodge.width= 0.9, jitter.width = 0.3), shape = 21,      colour = "black", size = 2, stroke =1)+
+  theme_Publication() +
+  theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),
+        panel.grid.major  = element_blank(),
+        legend.position = "none") +
+  ylab(expression(paste("Belief volatility - ", "\u03C9"))) + # ylab(expression("\u03C9"[good])) +  
+  xlab("")+ discrete_scale("fill","Publication",manual_pal(values = c("#386cb0","#fdb462")))
+
+# df.sigplot = data.frame(x = c("Betray", "Betray"),
+#                         xend = c("Equalize", "Betray"),
+#          fit_                txt = c("*", ""),
+#                         x_pt1 = c("Betray", NA),
+#                         x_pt2 = c("Equalize", NA),
+#                         y_pt = c(1.4 , NA),
+#                         Genotype = model_pp_change$Genotype%>% unique() )
+# 
+# g_change_gen <- g_change_gen + geom_segment(data = df.sigplot, aes(x = x, y = 1.5, xend = xend, yend = 1.5)) +
+#   geom_text(data = df.sigplot, aes(label = txt), x = 1.5, y = 1.6, size = 10) +
+#   geom_point(data = df.sigplot,aes(x = x_pt1, y = y_pt), shape = 17, size = 3 ) +
+#   geom_point(data = df.sigplot,aes(x = x_pt2, y = y_pt), shape = 17, size = 3 )
+
+g_gen_om1_a1p <- data_group %>% filter(ankk == "A1+") %>% ggplot(aes(x = drug, y = om1))+  # group = ID, linetype = Genotype)) 
+  # geom_violin(aes(fill = drug))+
+  geom_boxplot(aes(fill = drug), width=0.5, color="black", outlier.colour = NA)+
+  # stat_summary(fun.y=mean, geom="point", shape=20, size=14, color="red", fill="red") + 
+  
+  geom_point(aes(fill = drug, colour = drug),  alpha = 0.3, position = position_jitterdodge(dodge.width= 0.9, jitter.width = 0.3), shape = 21,      colour = "black", size = 2, stroke =1)+
+  theme_Publication() +
+  theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),
+        panel.grid.major  = element_blank(),
+        legend.position = "none") + 
+  ylab(expression("\u03C9"[good])) +
+  
+  xlab("")+ discrete_scale("fill","Publication",manual_pal(values = c("#386cb0","#fdb462")))+  facet_wrap(~ankk)
+
+# g_gen_om1 
+
+g_gen_om2_a1p <- data_group %>% filter(ankk == "A1+") %>% ggplot(aes(x = drug, y = om2))+  # group = ID, linetype = Genotype)) 
+  # geom_violin(aes(fill = drug))+
+  geom_boxplot(aes(fill = drug), width=0.5, color="black", outlier.colour = NA)+
+  # stat_summary(fun.y=mean, geom="point", shape=20, size=14, color="red", fill="red") + 
+  
+  geom_point(aes(fill = drug, colour = drug),  alpha = 0.3, position = position_jitterdodge(dodge.width= 0.9, jitter.width = 0.3), shape = 21,      colour = "black", size = 2, stroke =1)+
+  theme_Publication() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.grid.major  = element_blank(),
+        legend.position = "none")+
+  ylab(expression("\u03C9"[bad])) + 
+  xlab("")+ discrete_scale("fill","Publication",manual_pal(values = c("#386cb0","#fdb462")))+  facet_wrap(~ankk)
+
+g_gen_noise <- ggplot(data = data_group, aes(x = drug, y = noise))+  # group = ID, linetype = Genotype)) 
+  # geom_violin(aes(fill = drug))+
+  geom_boxplot(aes(fill = drug), width=0.5, color="black", outlier.colour = NA)+
+  # stat_summary(fun.y=mean, geom="point", shape=20, size=14, color="red", fill="red") + 
+  
+  geom_point(aes(fill = drug, colour = drug),  alpha = 0.3, position = position_jitterdodge(dodge.width= 0.9, jitter.width = 0.3), shape = 21,      colour = "black", size = 2, stroke =1)+
+  theme_Publication() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.grid.major  = element_blank(),
+        legend.position = "none") +
+  ylab("\U1D702") + xlab("")+ discrete_scale("fill","Publication",manual_pal(values = c("#386cb0","#fdb462")))
+
+g_gen_noise_a1p <- ggplot(data = data_group %>% filter(ankk == "A1+"), aes(x = drug, y = noise))+  # group = ID, linetype = Genotype)) 
+  # geom_violin(aes(fill = drug))+
+  geom_boxplot(aes(fill = drug), width=0.5, color="black")+
+  geom_point(aes(fill = drug, colour = drug),  alpha = 0.3, position = position_jitterdodge(dodge.width= 0.9, jitter.width = 0.3), shape = 21,      colour = "black", size = 2, stroke =1)+
+  theme_Publication() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.grid.major  = element_blank(),
+        legend.position = "none") +
+  ylab("\U1D702") + xlab("")+ discrete_scale("fill","Publication",manual_pal(values = c("#386cb0","#fdb462"))) +  facet_wrap(~ankk)
+
+g_gen_mu0 <- ggplot(data = data_group, aes(x = drug, y = mu0))+  # group = ID, linetype = Genotype)) 
+  # geom_violin(aes(fill = drug))+
+  geom_boxplot(aes(fill = drug), width=0.5, color="black", outlier.colour = NA)+
+  geom_point(aes(fill = drug, colour = drug),  alpha = 0.3, position = position_jitterdodge(dodge.width= 0.9, jitter.width = 0.3), shape = 21,      colour = "black", size = 2, stroke =1)+
+  
+  theme_Publication() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.grid.major  = element_blank(),
+        legend.position = "none") +
+  ylab(expression(bold("\u03BC"[0]))) + xlab("")+ discrete_scale("fill","Publication",manual_pal(values = c("#386cb0","#fdb462")))
+
+
+
+g_gen_gam <- ggplot(data = data_group, aes(x = drug, y = log(gam)))+  # group = ID, linetype = Genotype)) 
+  # geom_violin(aes(fill = drug))+
+  geom_boxplot(aes(fill = drug), width=0.5, color="black", outlier.colour = NA)+
+  geom_point(aes(fill = drug, colour = drug),  alpha = 0.3, position = position_jitterdodge(dodge.width= 0.9, jitter.width = 0.3), shape = 21,      colour = "black", size = 2, stroke =1)+
+  theme_Publication() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        panel.grid.major  = element_blank(),
+        legend.position = "none") +
+  ylab("\u0263'") +  discrete_scale("fill","Publication",manual_pal(values = c("#386cb0","#fdb462")))
+
+g_gen_gam_a1p <- ggplot(data = data_group %>% filter(ankk == "A1+"), aes(x = drug, y = log(gam)))+  # group = ID, linetype = Genotype)) 
+  # geom_violin(aes(fill = drug))+
+  geom_boxplot(aes(fill = drug), width=0.5, color="black")+
+  geom_point(aes(fill = drug, colour = drug),  alpha = 0.3, position = position_jitterdodge(dodge.width= 0.9, jitter.width = 0.3), shape = 21,      colour = "black", size = 2, stroke =1)+
+  theme_Publication() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.grid.major  = element_blank(),
+        legend.position = "none") +
+  ylab("\u0263'") + xlab("")+ discrete_scale("fill","Publication",manual_pal(values = c("#386cb0","#fdb462")))  +  facet_wrap(~ankk)
+
+g_gen_gam_a1p
+
+# g_gen_noise
+```
+
+```{r plot the omegas and lrs }
+# plot_grid(g_gen_om2 + coord_cartesian(ylim=c(-6.5, 0)),
+# g_gen_om1 + coord_cartesian(ylim=c(-6.5, 0)))
+ylimits = c(-7,0)
+
+g_om <- plot_grid(
+  g_gen_om_mean + coord_cartesian(ylim=ylimits)  + facet_wrap(~ankk),
+  g_gen_om1_a1p+ coord_cartesian(ylim=ylimits) ,
+  g_gen_om2_a1p+ coord_cartesian(ylim=ylimits) ,
+  
+  rel_widths = c(1,0.7,0.7), ncol = 3)
+
+
+```
+
+```{r plot gam}
+
+
+g_model_full <- plot_grid(g_gen_noise + facet_wrap(~ankk),
+                          g_gen_gam + facet_wrap(~ankk),
+                          g_gen_mu0 + facet_wrap(~ankk),
+                          ncol = 3) 
+g_legend_model <- get_legend(g_gen_om_mean + 
+                               theme(legend.position = "right",
+                                     legend.key = element_rect(colour = NA),
+                                     legend.direction = "horizontal",
+                                     legend.key.size= unit(0.2, "cm"),
+                                     # legend.margin = unit(0, "cm"),
+                                     legend.title = element_blank()))
+plot_grid(g_model, g_legend_model, rel_widths = c(1,.2))
+g_gam <- g_gen_gam + facet_wrap(~ankk)
+
+
+
+
+
+# g_gam <- plot_grid(
+# g_gen_om_mean+ coord_cartesian(ylim=ylimits),
+# g_gen_om_mean + coord_cartesian(ylim=ylimits)  + facet_wrap(~ankk),
+# rel_widths = c(1,1.5), ncol = 2)
+
+g_gam
+
+data_group <- data_group %>% 
+  group_by(drug,ankk) %>% 
+  mutate(N = length(gam),
+         mean_gam = mean(gam),
+         se_gam = sd(gam)/sqrt(N),
+         mean_eta = mean(noise),
+         se_eta =sd(noise)/sqrt(N)) %>% ungroup()
+data_all <- merge(data_beh, data_group, by = "ID")
+
+
+
+data_all <- data_all %>% 
+  mutate(seq01 = round(0.95*(Trial-1)/24,2)+ as.numeric(Trustee == "Good")*0.02,
+         seq01_pw =round(pw(seq01, gam),2),
+         seq01_pw2 =round(pw(seq01, mean_gam),2),
+         seq01_pw2_low =round(pw(seq01, mean_gam-se_gam),2),
+         seq01_pw2_up =round(pw(seq01, mean_gam+se_gam),2)) 
+
+
+# for (id_i in unique(data_all$ID)) {
+#   
+#   
+#   
+# }
+
+
+data_gam_sum <- data_all %>% group_by(Treatment, Genotype, seq01) %>% summarize(N=n(),
+                                                                                mean_seq01_pw = mean(seq01_pw),
+                                                                                se_seq01_pw = sd(seq01_pw)/sqrt(N)) %>% as_tibble()
+data_all %>% glimpse()
+
+# filter(Genotype == "A1-") %>% 
+g_gam_pw <- ggplot(data_all, aes(x = seq01, y = seq01_pw)) + 
+  geom_line(aes(group = gam, colour = Treatment), alpha = 0.5, size =0.5) + 
+  geom_line(data = data_gam_sum, aes(x =seq01, y = mean_seq01_pw, colour = Treatment), size =2)+
+  # geom_line(aes(x =seq01, y = seq01_pw2, colour = Treatment), size =2)+
+  # geom_ribbon(aes(x =seq01, ymin = seq01_pw2_low, ymax = seq01_pw2_up, group = Treatment), fill = "gray" , size =1.5)+ #E6E6E6"
+  # stat_summary( fun.y=mean)+
+  
+  theme_Publication() +  
+  theme(legend.position = "none")+
+  scale_colour_Publication() + 
+  scale_x_continuous(breaks = c(0,0.5,1))+ 
+  scale_y_continuous(breaks = c(0,0.5,1))+ 
+  xlab("Probability of\npositive BT") + ylab("Probability weight")+
+  facet_wrap(~Genotype, nrow =2)
+g_gam_pw
+
+prop_no = 25
+g_gam_ridge <-data_beh   %>% mutate(Trial_bin = ceiling(Trial/prop_no)*prop_no  )%>% filter(Trial_bin!=27) %>% 
+  ggplot() +
+  geom_density_ridges(aes( x = Investment, y = as.factor(Trial_bin) ,fill = Treatment, height = ..density..), alpha = 0.5 )  + 
+  theme_Publication() + scale_fill_Publication() + 
+  theme(legend.position = "none",axis.text.y = element_blank(), axis.ticks.y = element_blank(), axis.title.x = element_text(size = 15)) + #,
+  ylab("") + xlab("Investment\ndistributions") + scale_x_continuous(breaks = c(0,5,10)) + coord_cartesian(xlim = c(0,10)) + ylab("")  + scale_y_discrete(expand = c(0, 0)) + facet_wrap(~Genotype, nrow =2)
+
+# gam_vect = c(0.5,1,5,20)
+# df = tibble(seq01 = seq(from = 0, to = 1, by = 0.01))
+# df %>% ggplot(aes(x = seq01, colour = gam_vect)) + stat_function(fun = function(c) pw(c,gam_vect))
+g_gam_all <- plot_grid(
+  g_gen_gam + facet_wrap(~ankk), g_gam_pw, g_gam_ridge, ncol = 3, rel_widths = c(1,1,1))
+
+g_modelling_gamma <- plot_grid(
+  plot_grid(
+    g_gen_gam + facet_wrap(~ankk), g_incon_gen,
+    g_stats_gam_ankk, g_stats_incon, ncol = 2, rel_heights = c(1,0.5), rel_widths = c(0.9,1), labels = c("a", "b")),
+  g_gam_pw, g_gam_ridge,
+  nrow =1, rel_widths = c(1.3,0.6,0.5) ,labels = c("", "c", "d"))
+
+g_modelling_gamma
+
+```
+
+# rec and incongruent with serum and computational parameters -----
+```{r with reciprocity}
+
+if (FALSE) {
+
+  data_group_new <- data_group %>% left_join(data_rec_id, group_by = "ID")
+  data_group_new <- data_group_new %>% mutate(
+    # rec_id_s = ave(rec_id,FUN =scale),
+    #  rec_id_sig = ave(logit(rec_id),FUN =scale),
+    #  incon_id_s = ave(incon_id,FUN =scale),
+    #  incon_id_sig = ave(logit(incon_id+0.1),FUN =scale),
+    noise_s = ave(noise,FUN =scale) ,
+    om_s = ave(om_mean,FUN =scale) ,
+    loggam_s = ave(log(gam),FUN =scale) ,
+    mu0_s = ave(mu0,FUN =scale) 
+  )
+  
+  data_beh_group <- merge(data_group_new%>% select(ID, noise_s : mu0_s), data_beh, by = "ID")
+  saveRDS(data_beh_group, file ="data_beh_group.rds")
+}
+data_beh_group <- readRDS(file ="data_beh_group.rds")
+
+data_group %>%
+  ggplot(aes(x=om_mean, y = log(gam), colour = drug)) +
+  geom_point() +  theme_Publication() + scale_fill_Publication() + scale_colour_Publication() + facet_wrap(~ankk)
+
+data_beh_group <- data_beh_group %>% mutate(extreme_trials = (Investment == 10|Investment ==0))
+
+
+
+ttl_size = 15
+
+g_om_rec <- data_group_new %>%
+  ggplot(aes(x=om_mean, y = rec_id)) +
+  geom_smooth(method= "lm", colour = "black", se = FALSE)+
+  
+  geom_point(alpha = 0.5) +  theme_Publication() + 
+  theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.title.y = element_text(size = 18),
+        panel.grid.major  = element_blank(),
+        legend.position = "none",
+        plot.title = element_text(size = ttl_size)) +
+  
+  scale_fill_Publication() + scale_colour_Publication()+
+  ylab("Reciprocal Trials") + 
+  xlab("\u03C9")
+g_gam_incon <- data_group_new %>%
+  ggplot(aes(x=log(gam), y = incon_id)) +
+  geom_smooth(method= "lm", colour = "black", se = FALSE)+
+  geom_point(alpha = 0.5) +  theme_Publication() + 
+  theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.title.y = element_text(size = 18),
+        panel.grid.major  = element_blank(),
+        legend.position = "none",
+        plot.title = element_text(size = ttl_size)) +
+  
+  scale_fill_Publication() + scale_colour_Publication()+
+  
+  ylab("Mistake Trials") +
+  xlab("\u0263'") #+ 
+labs(title = paste("r = ", round(cor.test(log(data_group_new$gam),data_group_new$rec_id)[["estimate"]],2), sep=""))
+
+g_model_beh <- plot_grid(g_om_rec, g_gam_incon, nrow = 1)
+```
+
+```{r stats for the above, for the supplementry }
+
+
+savemodelname = 'brms_rec_comp_par.rds'
+if(!file.exists(paste("Behavioral Models/", savemodelname, sep = ""))){
+  print(paste("estimating model",savemodelname ))
+  
+  brms_rec_comp_par <- brm(rec ~ om_s + loggam_s + noise_s + mu0_s + (1|ID),
+                           data = data_beh_group, family = bernoulli(),
+                           prior = c(set_prior("cauchy(0,2)", class = "sd"),
+                                     set_prior("normal(0,3)", class = "b")),
+                           warmup = 800, iter = 3000, chains =4,
+                           control = list(adapt_delta = 0.95))
+  # summary(mc.baseline)
+  
+  saveRDS(mc.rec.model, file = paste("Behavioral Models/", savemodelname, sep=""))
+}else brms_rec_comp_par <- readRDS("Behavioral Models/brms_rec_comp_par.rds")
+
+
+brms_rec_comp_par %>% fixef()%>% round(3) %>%   write.csv("brms_rec_comp_par.csv")
+
+savemodelname = 'brms_incon_comp_par.rds'
+if(!file.exists(paste("Behavioral Models/", savemodelname, sep = ""))){
+  print(paste("estimating model",savemodelname ))
+  
+  mc.incon.model <- brm(incongruent ~ om_s + loggam_s + noise_s + mu0_s + (1|ID),
+                        data = data_beh_group, family = bernoulli(),
+                        prior = c(set_prior("cauchy(0,2)", class = "sd"),
+                                  set_prior("normal(0,3)", class = "b")),
+                        warmup = 800, iter = 3000, chains =4,
+                        control = list(adapt_delta = 0.95))
+  # summary(mc.baseline)
+  
+  saveRDS(mc.incon.model, file = paste("Behavioral Models/", savemodelname, sep=""))
+} else brms_incon_comp_par <- readRDS("Behavioral Models/brms_incon_comp_par.rds")
+brms_incon_comp_par %>% fixef()%>% round(3) %>%   write.csv("brms_incon_comp_par.csv")
+
+
+mod1 <- glmer(incongruent ~ loggam_s + (1|ID), family = binomial(), data = data_beh_group)
+mod1 %>%  summary() %>%  coef() %>% as.data.frame()%>% round(3) %>%   write.csv("lme_incon_comp_par.csv")
+
+mod2 <- glmer(rec ~ om_s + loggam_s + noise_s + mu0_s + (1|ID), family = binomial(), data = data_beh_group )
+mod2 %>%  summary() %>%  coef() %>% as.data.frame()%>% round(3) %>%   write.csv("lme_rec_comp_par.csv")
+
+mod2%>% fixef()%>% round(3)
+
+```
+
+# parameter retrieval  ----------------
+
+```{r, echo=FALSE, warning= FALSE, fig.width = 12}
+savedataset = "Refit_lkj_hgf_pw"  
+drf_temp <- readRDS(paste(savedataset, "_pars_all.rds", sep=""))
+drf_temp$om_mean <- 1/2*(drf_temp$om_good +drf_temp$om_bad)
+drf_temp$om_mean_rf <- 1/2*(drf_temp$om_good_rf +drf_temp$om_bad_rf)
+
+drf_temp$om_diff <- drf_temp$om_good - drf_temp$om_bad
+# drf_temp$om_diff_rf <- drf_temp$om_good_rf -drf_temp$om_bad_rf
+# cor.test(drf_temp$om_diff,drf_temp$om_diff_rf)
+
+ttl_size = 15
+
+g_rf_om_mean<- ggplot(data =drf_temp, aes(x= om_mean, y = om_mean_rf)) + 
+  geom_point(alpha = 0.5)+
+  geom_abline(slope = 1) +
+  # geom_line(data = data.frame(x = c(min(drf_temp-6,1), y = c(-6,1)), aes(x=x, y= y))+
+  # geom_smooth(method = "lm", se = FALSE, colour = "black") +  # se = "FALSE")
+  # coord_cartesian(xlim = c(-8,0), ylim = c(-8,0)) +   
+  theme_Publication() + 
+  theme(axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        panel.grid.major  = element_blank(),
+        legend.position = "none",
+        plot.title = element_text(size = ttl_size)) +   ylab("") +xlab("\u03C9") +  #ylab("\u03C9 (refitted)") +
+  labs(title = paste("r = ", round(cor.test(drf_temp$om_mean,drf_temp$om_mean_rf)[["estimate"]],2), sep=""))
+# geom_text(data = data.frame(txt = paste("r = ", round(cor.test(drf_temp$om_mean,drf_temp$om_mean_rf)[["estimate"]],2), sep="") ), aes(label = txt), x = -5, y = 0, size = 8) 
+
+# labs(title=paste("r = ", round(cor.test(drf_temp$om_mean,drf_temp$om_mean_rf)[["estimate"]],2), sep=""))
+
+
+# \U1D702 "\u03BC" \u0263
+g_rf_noise<- ggplot(data =drf_temp, aes(x= noise, y = noise_rf)) + 
+  
+  geom_point(alpha = 0.5)+
+  geom_abline(slope = 1) +
+  # geom_smooth(method = "lm", se = FALSE, colour = "black") +  # se = "FALSE")
+  # coord_cartesian(xlim = c(-8,0), ylim = c(-8,0)) +   
+  theme_Publication() + 
+  theme(axis.ticks = element_blank(),         axis.text = element_blank(),
+        panel.grid.major  = element_blank(),
+        legend.position = "none",
+        plot.title = element_text(size = ttl_size)) +   ylab("")   + xlab("\U1D702") + # ylab("\U1D702 (refitted)") 
+  # coord_fixed()  +
+  labs(title = paste("r = ", round(cor.test(drf_temp$noise,drf_temp$noise_rf)[["estimate"]],2), sep="") ) 
+
+g_rf_mu0<- ggplot(data =drf_temp, aes(x= mu0, y = mu0_rf)) + 
+  
+  geom_point(alpha = 0.5)+
+  geom_abline(slope = 1) +
+  # geom_smooth(method = "lm", se = FALSE, colour = "black") +  # se = "FALSE") 
+  # coord_cartesian(xlim = c(-8,0), ylim = c(-8,0)) +   
+  theme_Publication()  + 
+  theme(axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        panel.grid.major  = element_blank(),
+        legend.position = "none",
+        plot.title = element_text(size = ttl_size)) +   ylab("") + xlab(expression(bold("\u03BC"[0])))+ 
+  labs(title = paste("r = ", round(cor.test(drf_temp$mu0,drf_temp$mu0_rf)[["estimate"]],2), sep="") ) 
+
+
+g_rf_loggam<- ggplot(data =drf_temp, aes(x= loggam, y = loggam_rf)) + 
+  geom_point(alpha = 0.5)+
+  geom_abline(slope = 1) +
+  # geom_smooth(method = "lm", se = FALSE, colour = "black") +  # se = "FALSE")
+  # coord_cartesian(xlim = c(-8,0), ylim = c(-8,0)) +   
+  theme_Publication() + 
+  theme(axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        panel.grid.major  = element_blank(),
+        legend.position = "none",
+        
+        plot.title = element_text(size = ttl_size)) + ylab("")   + xlab("\u0263'") + #ylab("\u0263' (refitted)")
+  labs(title =  paste("r = ",round(cor.test(drf_temp$loggam,drf_temp$loggam_rf)[["estimate"]],2), sep=""))
+
+#  geom_text(data = data.frame(txt = paste("r = ",round(cor.test(drf_temp$loggam,drf_temp$loggam_rf)[["estimate"]],2), sep="") ), aes(label = txt),x = -2, y = 2, size = 8)  
+
+
+g_rf <- plot_grid(g_rf_om_mean, g_rf_loggam, g_rf_noise, g_rf_mu0, nrow = 1) #, ncol = 2)
+rf_title <-  ggdraw() + 
+  draw_label(
+    "Parameter recovery",
+    x = 0,
+    hjust = -0.5
+  ) 
+g_rt_ttl <- plot_grid(rf_title, g_rf, ncol = 1, rel_heights = c(0.2,1))
+
+
+
+```
+
+
+```{r compare stan models}
+#  stan model compare models  -------------------
+
+cData <-readRDS(file = "Model_comparison.rds")
+cData %>% glimpse()
+g_compare_models <- ggplot(cData, aes(x = model, y =  elpd_diff)) +  
+  
+  
+  geom_errorbar(aes(ymin= elpd_diff - se_diff, ymax = elpd_diff+se_diff), width = 0.2, position = position_dodge(0.9)) + theme_Publication() +
+  geom_bar(position = position_dodge(), stat = "identity") +  scale_x_discrete(name="", limits = c("HGF + \u0263", "HGF", "RW")) + 
+  
+  ylab("Comparing expected\nlog predictive density")
+
+g_compare_models
+
+```
+
+```{r prepare for figure 2}
+g_rtg_blank <- ggplot() + theme_foundation() + theme(panel.background = element_rect(colour = NA),
+                                                     plot.background = element_rect(colour = NA),
+                                                     panel.border = element_rect(colour = NA))
+example_title <-  ggdraw() + 
+  draw_label(
+    "Two example subjects",
+    x = 0,
+    hjust = -0.5
+  ) 
+model_com_title <-  ggdraw() + 
+  draw_label(
+    "Correlation with behavior",
+    x = 0,
+    hjust = -0.5
+  ) 
+# g_model_comp_blank <- plot_grid(model_com_title, g_rtg_blank, ncol = 1, rel_heights = c(0.1,1))
+g_model_beh_ttl <-plot_grid(model_com_title, g_model_beh, ncol = 1, rel_heights = c(0.1,1)) 
+g_example_ttl <- plot_grid(example_title, g_example, ncol = 1, rel_heights = c(0.1,1))
+# g_example_ttl
+g_figure_modelling <- plot_grid(
+  plot_grid(g_rtg_blank, g_example_ttl, labels = c("a","b")),
+  plot_grid(g_rt_ttl, g_model_beh_ttl, rel_widths = c(2,1), labels = c("c", "d")) ,
+  rel_heights = c(2.8,1),
+  nrow = 2)
+ggsave2(plot = g_figure_modelling, filename = "Figure_model.png", units = "cm", width = 30, height = 30 )
+
+
+
+```
+
+# posterior predictive checks  ----------------
+
+collect the model predictions
+
+```{r collect the model predictions, fig.width = 10, fig.height = 9, echo=FALSE, warning= FALSE}
+# collect the model predictions  -----------------------------------------------------------
+Pars_extract_set <- rstan::extract(fit_model_gen, pars=c('y_pred',
+                                                         'mu_good_vect',
+                                                         'mu_bad_vect',
+                                                         'mu_good2_vect',
+                                                         'mu_bad2_vect',
+                                                         'pi_good_vect',
+                                                         'pi_bad_vect',
+                                                         'pi_good2_vect',
+                                                         'pi_bad2_vect',
+                                                         'om_good',
+                                                         'c'))
+# Pars_extract_set$c %>% colMeans() 
+
+if (file.exists("Data_beh_with_predictions.rds")) {
+  data_plot_model_pred<-readRDS("Data4PlottingPosteriorChecks.rds")
+  data_plot_model_pred_gen<-readRDS("Data4PlottingPosteriorChecks_genotype.rds")
+  lr1_mat<- readRDS("Data4PlottingLearningRates.rds")
+  y_pred_change <- readRDS("y_pred_change.rds")
+  data_group <- readRDS( "Data_group_with_predictions.rds")
+  data_beh <- readRDS("Data_beh_with_predictions.rds")
+} else  {
+  
+  
+  
+  colSdColMeans <- function(x, na.rm=TRUE) {
+    if (na.rm) {
+      n <- colSums(!is.na(x)) # thanks @flodel
+    } else {
+      n <- nrow(x)
+    }
+    colVar <- colMeans(x*x, na.rm=na.rm) - (colMeans(x, na.rm=na.rm))^2
+    return(sqrt(colVar * n/(n-1)))
+  }
+  
+  
+  
+  sample_no <- dim(Pars_extract_set$y_pred)[1]
+  # someData <- rep(sample_no*76*50);
+  lr1_mat<- array(NA, c( sample_no,76*50))
+  PE_mat<- array(NA, c( sample_no,76*50))
+  mu2_mat<- array(NA, c( sample_no,76*50))
+  prec_weighted_PE_mat<- array(NA, c( sample_no,76*50))
+  pi1_mat<- array(NA, c( sample_no,76*50))
+  pi2_mat<- array(NA, c( sample_no,76*50))
+  prec_weights_mat<- array(NA, c( sample_no,76*50))
+  prec_weights_lr_mat <- array(NA, c( sample_no,76*50))
+  prec_weights_lr_sul <- array(NA, c( sample_no,1))
+  prec_weights_lr_sul_a1p <- array(NA, c( sample_no,1))
+  prec_weights_lr_sul_a1m <- array(NA, c( sample_no,1))
+  y_pred_change_BT <- array(NA, c( sample_no,76*2))
+  y_pred_change<- array(NA, c( sample_no,76*50))
+  y_pred_abschange<- array(NA, c( sample_no,76*50))
+  y_pred_pos<- array(NA, c( sample_no,76*50))
+  y_pred_neg<- array(NA, c( sample_no,76*50))
+  y_pred_incon<- array(NA, c( sample_no,76*50))
+  
+  y_pred_change_mean <- array(NA, c( sample_no,76))
+  y_pred_abschange_mean <- array(NA, c( sample_no,76))
+  y_pred_pos_sum<- array(NA, c( sample_no,76))
+  y_pred_neg_sum<- array(NA, c( sample_no,76))
+  y_pred_incon_sum<- array(NA, c( sample_no,76))
+  y_pred_rec_sum <- array(NA, c( sample_no,76))
+  
+  for (i in 1:sample_no) {
+    if (i/(sample_no/100) == i%/%(sample_no/100) ) print(paste(i/sample_no*100, "%"))
+    
+    y_pred_chain <- Pars_extract_set$y_pred[i,,]
+    y_pred_chain_long <- as.vector(t(y_pred_chain))
+    
+    Inv_Mat_good <- matrix(y_pred_chain_long[data_beh$Trustee == "Good"],nrow = 25)
+    Inv_Mat_bad <- matrix(y_pred_chain_long[data_beh$Trustee == "Bad"],nrow = 25)
+    
+    # dim(Inv_Mat_good_change_temp[1:24,])
+    Inv_Mat_good_change <- Inv_Mat_good[2:25,] - Inv_Mat_good[1:24,]
+    Inv_Mat_bad_change <-  Inv_Mat_bad[2:25,] - Inv_Mat_bad[1:24,]
+    # Inv_Mat_bad_change <- c(Na, Inv_Mat_bad_change)
+    # head(Inv_Mat_bad_change_temp)
+    
+    Inv_Mat_good_change_temp <- matrix(0, 25,76)
+    Inv_Mat_good_change_temp[25,] <- NA
+    Inv_Mat_good_change_temp[1:24,] <- Inv_Mat_good_change
+    
+    Inv_Mat_bad_change_temp <- matrix(0, 25,76)
+    Inv_Mat_bad_change_temp[25,] <- NA
+    Inv_Mat_bad_change_temp[1:24,] <- Inv_Mat_bad_change
+    
+    Inv_Mat_good_change_long <- as.numeric(as.vector(Inv_Mat_good_change_temp))
+    Inv_Mat_bad_change_long <-  as.numeric(as.vector(Inv_Mat_bad_change_temp))
+    
+    Change_check <- rep(-99, 3800)
+    Change_check[data_beh$Trustee=="Good"] <- Inv_Mat_good_change_long
+    Change_check[data_beh$Trustee=="Bad"] <- Inv_Mat_bad_change_long
+    
+    mu_good2_vect_chain_long <- as.vector(t(Pars_extract_set$mu_good2_vect[i,,]))
+    
+    
+    pi_good2_vect_chain_long <- as.vector(t(Pars_extract_set$pi_good2_vect[i,,]))
+    pi_good1_vect_chain_long <- as.vector(t(Pars_extract_set$pi_good_vect[i,,]))
+    
+    pi_bad2_vect_chain_long <- as.vector(t(Pars_extract_set$pi_bad2_vect[i,,]))
+    pi_bad1_vect_chain_long <- as.vector(t(Pars_extract_set$pi_bad_vect[i,,]))
+    
+    pi1_vect_chain_long <- pi_good1_vect_chain_long
+    pi1_vect_chain_long[pi_good2_vect_chain_long == -1] <- pi_bad1_vect_chain_long[pi_good2_vect_chain_long == -1]
+    pi2_vect_chain_long <- pi_good2_vect_chain_long
+    pi2_vect_chain_long[pi_good2_vect_chain_long == -1] <- pi_bad2_vect_chain_long[pi_good2_vect_chain_long == -1]
+    
+    pi2_pred_vect_chain_long = pi2_vect_chain_long + 1/pi1_vect_chain_long
+    
+    pi1_mat[i, ]<-pi1_vect_chain_long
+    pi2_mat[i, ]<- pi2_vect_chain_long
+    prec_weights_mat[i,] <- pi2_pred_vect_chain_long
+    prec_weights_lr_mat[i,] <- 1/pi2_pred_vect_chain_long
+    prec_weights_lr_sul[i] <- mean(1/pi2_pred_vect_chain_long[data_beh$Treatment=="sulpiride"]) - mean(1/pi2_pred_vect_chain_long[data_beh$Treatment=="control"])
+    
+    prec_weights_lr_sul_a1p[i] <- mean(1/pi2_pred_vect_chain_long[data_beh$Treatment=="sulpiride"& data_beh$Genotype=="A1+"]) - mean(1/pi2_pred_vect_chain_long[data_beh$Treatment=="control"& data_beh$Genotype=="A1+"])
+    prec_weights_lr_sul_a1m[i] <- mean(1/pi2_pred_vect_chain_long[data_beh$Treatment=="sulpiride"& data_beh$Genotype=="A1-"]) - mean(1/pi2_pred_vect_chain_long[data_beh$Treatment=="control"& data_beh$Genotype=="A1-"])
+    
+    mu_good1_vect_chain_long <- 1/(1+ exp(-mu_good2_vect_chain_long));
+    mu_vect_mat_good <-  matrix(mu_good1_vect_chain_long[data_beh$Trustee == "Good"],nrow = 25)
+    
+    dasgmmu2 = as.numeric(data_beh$Backtransfer==1) - mu_good1_vect_chain_long;
+    dasgmmu2_mat <-  matrix(dasgmmu2[data_beh$Trustee == "Good"],nrow = 25)
+    
+    diff_sgmmu2_mat = mu_vect_mat_good[2:25,] - mu_vect_mat_good[1:24,]
+    
+    lr1_good    = dasgmmu2_mat
+    lr1_good[2:25,] = diff_sgmmu2_mat/dasgmmu2_mat[1:24,];
+    lr1_good[1,] = NA
+    lr1_good[dasgmmu2_mat==0] = 0;
+    
+    mu_bad2_vect_chain_long <- as.vector(t(Pars_extract_set$mu_bad2_vect[i,,]))
+    mu_bad1_vect_chain_long <- 1/(1+ exp(-mu_bad2_vect_chain_long));
+    mu_vect_mat_bad <-  matrix(mu_bad1_vect_chain_long[data_beh$Trustee == "Bad"],nrow = 25)
+    
+    dasgmmu2 = as.numeric(data_beh$Backtransfer==1) - mu_bad1_vect_chain_long;
+    dasgmmu2_mat <-  matrix(dasgmmu2[data_beh$Trustee == "Bad"],nrow = 25)
+    
+    diff_sgmmu2_mat = mu_vect_mat_bad[2:25,] - mu_vect_mat_bad[1:24,]
+    
+    lr1_bad    = dasgmmu2_mat
+    lr1_bad[2:25,] = diff_sgmmu2_mat/dasgmmu2_mat[1:24,];
+    lr1_bad[1,] = NA
+    lr1_bad[dasgmmu2_mat==0] = 0;
+    
+    lr1_mat[i,data_beh$Trustee=="Good"] <- as.vector(lr1_good)
+    lr1_mat[i,data_beh$Trustee=="Bad"] <- as.vector(lr1_bad)
+    
+    mu2_vect_chain_long <- mu_good2_vect_chain_long
+    mu2_vect_chain_long[mu2_vect_chain_long==-1] = mu_bad2_vect_chain_long[mu2_vect_chain_long==-1]
+    mu1_vect_chain_long =  1/(1+ exp(-mu2_vect_chain_long));
+    
+    mu2_mat[i,] = mu2_vect_chain_long
+    PE_mat[i,] = as.numeric(data_beh$Backtransfer==1) -  mu1_vect_chain_long
+    prec_weighted_PE_mat[i,] = PE_mat[i,]* 1/pi2_pred_vect_chain_long
+    
+    y_pred_change[i,] <- Change_check
+    y_pred_abschange[i,] <- abs(Change_check)
+    y_pred_pos[i,] <- (data_beh$Backtransfer == 1 & Change_check > 0) | (data_beh$Backtransfer == 1 & y_pred_chain_long == 10)
+    y_pred_neg[i,] <- (data_beh$Backtransfer == -1 & Change_check < 0 ) | (data_beh$Backtransfer == -1 & y_pred_chain_long == 0)
+    y_pred_incon[i,] <- (data_beh$Backtransfer == 1 & Change_check < 0) | (data_beh$Backtransfer == -1 & Change_check > 0)
+    
+    data_pred_temp <- tibble(y_pred_pos_temp = y_pred_pos[i,],
+                             y_pred_neg_temp = y_pred_neg[i,],
+                             y_pred_incon_temp = y_pred_incon[i,],
+                             ID = data_beh$ID,
+                             Change_temp = Change_check) %>% 
+      filter(!is.na(Change_temp)) %>%
+      group_by(ID) %>% 
+      summarise(sumincon = sum(y_pred_incon_temp),
+                sumposrec = sum(y_pred_pos_temp),
+                sumnegrec = sum(y_pred_neg_temp),
+                sumrec = sum(y_pred_pos_temp)+sum(y_pred_neg_temp),
+                abschange_mean = mean(abs(Change_temp)))
+    
+    # data_pred_temp 
+    y_pred_abschange_mean[i,] <- data_pred_temp$abschange_mean 
+    y_pred_pos_sum[i,]<- data_pred_temp$sumposrec 
+    y_pred_neg_sum[i,]<- data_pred_temp$sumnegrec 
+    y_pred_incon_sum[i,] <-data_pred_temp$sumincon 
+    y_pred_rec_sum[i,] <- data_pred_temp$sumrec 
+    
+    
+  }
+  
+  
+  
+  
+  
+  data_beh$predictions <- as.vector(t(colMeans(Pars_extract_set$y_pred)))
+  data_beh$predictions_abschange <- colMeans(y_pred_abschange)
+  data_beh$predictions_abschange_ci025 <- y_pred_abschange %>% apply(2, quantile, probs = 0.025, na.rm = TRUE)
+  data_beh$predictions_abschange_ci25 <- y_pred_abschange %>% apply(2, quantile, probs = 0.25, na.rm = TRUE)
+  data_beh$predictions_abschange_ci5 <- y_pred_abschange %>% apply(2, quantile, probs = 0.5, na.rm = TRUE)
+  data_beh$predictions_abschange_ci75 <- y_pred_abschange %>% apply(2, quantile, probs = 0.75, na.rm = TRUE)
+  data_beh$predictions_abschange_ci975 <- y_pred_abschange %>% apply(2, quantile, probs = 0.975, na.rm = TRUE)
+  
+  data_beh$predictions_change <- colMeans(y_pred_change)
+  data_beh$predictions_change_ci025 <- y_pred_change %>% apply(2, quantile, probs = 0.025, na.rm = TRUE)
+  data_beh$predictions_change_ci25 <- y_pred_change %>% apply(2, quantile, probs = 0.25, na.rm = TRUE)
+  data_beh$predictions_change_ci5 <- y_pred_change %>% apply(2, quantile, probs = 0.5, na.rm = TRUE)
+  data_beh$predictions_change_ci75 <- y_pred_change %>% apply(2, quantile, probs = 0.75, na.rm = TRUE)
+  data_beh$predictions_change_ci975 <- y_pred_change %>% apply(2, quantile, probs = 0.975, na.rm = TRUE)
+  
+  
+  data_beh$lr1 = colMeans(lr1_mat)
+  data_beh$lr1_ci025 <- lr1_mat %>% apply(2, quantile, probs = 0.025, na.rm = TRUE)
+  data_beh$lr1_ci25 <- lr1_mat %>% apply(2, quantile, probs = 0.25, na.rm = TRUE)
+  data_beh$lr1_ci5 <- lr1_mat %>% apply(2, quantile, probs = 0.5, na.rm = TRUE)
+  data_beh$lr1_ci75 <- lr1_mat %>% apply(2, quantile, probs = 0.75, na.rm = TRUE)
+  data_beh$lr1_ci975 <- lr1_mat %>% apply(2, quantile, probs = 0.975, na.rm = TRUE)
+  
+  data_beh$prec_weights = colMeans(prec_weights_mat)
+  data_beh$prec_weights_ci025 <- prec_weights_mat %>% apply(2, quantile, probs = 0.025, na.rm = TRUE)
+  data_beh$prec_weights_ci25 <- prec_weights_mat %>% apply(2, quantile, probs = 0.25, na.rm = TRUE)
+  data_beh$prec_weights_ci5 <- prec_weights_mat %>% apply(2, quantile, probs = 0.5, na.rm = TRUE)
+  data_beh$prec_weights_ci75 <- prec_weights_mat %>% apply(2, quantile, probs = 0.75, na.rm = TRUE)
+  data_beh$prec_weights_ci975 <- prec_weights_mat %>% apply(2, quantile, probs = 0.975, na.rm = TRUE)
+  
+  data_beh$prec_weights_lr = colMeans(prec_weights_lr_mat)
+  data_beh$prec_weights_lr_ci025 <- prec_weights_lr_mat %>% apply(2, quantile, probs = 0.025, na.rm = TRUE)
+  data_beh$prec_weights_lr_ci25 <- prec_weights_lr_mat %>% apply(2, quantile, probs = 0.25, na.rm = TRUE)
+  data_beh$prec_weights_lr_ci5 <- prec_weights_lr_mat %>% apply(2, quantile, probs = 0.5, na.rm = TRUE)
+  data_beh$prec_weights_lr_ci75 <- prec_weights_lr_mat %>% apply(2, quantile, probs = 0.75, na.rm = TRUE)
+  data_beh$prec_weights_lr_ci975 <- prec_weights_lr_mat %>% apply(2, quantile, probs = 0.975, na.rm = TRUE)
+  
+  
+  data_beh$PE <- colMeans(PE_mat)
+  data_beh$prec_weighted_PE <- colMeans(prec_weighted_PE_mat)
+  
+  data_beh$pi1 <- colMeans(pi1_mat)
+  data_beh$pi1_ci025 <- pi1_mat %>% apply(2, quantile, probs = 0.025, na.rm = TRUE)
+  data_beh$pi1_ci25 <- pi1_mat %>% apply(2, quantile, probs = 0.25, na.rm = TRUE)
+  data_beh$pi1_ci5 <- pi1_mat %>% apply(2, quantile, probs = 0.5, na.rm = TRUE)
+  data_beh$pi1_ci75 <- pi1_mat %>% apply(2, quantile, probs = 0.75, na.rm = TRUE)
+  data_beh$pi1_ci975 <- pi1_mat %>% apply(2, quantile, probs = 0.975, na.rm = TRUE)
+  
+  data_beh$si1 <- colMeans(1/pi1_mat)
+  data_beh$si1_ci025 <- (1/pi1_mat) %>% apply(2, quantile, probs = 0.025, na.rm = TRUE)
+  data_beh$si1_ci25 <- (1/pi1_mat) %>% apply(2, quantile, probs = 0.25, na.rm = TRUE)
+  data_beh$si1_ci5 <- (1/pi1_mat) %>% apply(2, quantile, probs = 0.5, na.rm = TRUE)
+  data_beh$si1_ci75 <- (1/pi1_mat) %>% apply(2, quantile, probs = 0.75, na.rm = TRUE)
+  data_beh$si1_ci975 <- (1/pi1_mat) %>% apply(2, quantile, probs = 0.975, na.rm = TRUE)
+  
+  data_beh$mu2 <- colMeans(mu2_mat)
+  data_beh$mu2_ci025 <- mu2_mat %>% apply(2, quantile, probs = 0.025, na.rm = TRUE)
+  data_beh$mu2_ci25 <- mu2_mat %>% apply(2, quantile, probs = 0.25, na.rm = TRUE)
+  data_beh$mu2_ci5 <- mu2_mat %>% apply(2, quantile, probs = 0.5, na.rm = TRUE)
+  data_beh$mu2_ci75 <- mu2_mat %>% apply(2, quantile, probs = 0.75, na.rm = TRUE)
+  data_beh$mu2_ci975 <- mu2_mat %>% apply(2, quantile, probs = 0.975, na.rm = TRUE)
+  
+  data_beh$pi2 <- colMeans(pi2_mat)
+  data_beh$mu_good2 <- as.vector(t(colMeans(Pars_extract_set$mu_good2_vect)))
+  data_beh$mu_bad2 <- as.vector(t(colMeans(Pars_extract_set$mu_bad2_vect)))
+  data_beh$pi_good <- as.vector(t(colMeans(Pars_extract_set$pi_good_vect)))
+  data_beh$pi_bad <- as.vector(t(colMeans(Pars_extract_set$pi_bad_vect)))
+  data_beh$pi_good2 <- as.vector(t(colMeans(Pars_extract_set$pi_good2_vect)))
+  data_beh$pi_bad2 <- as.vector(t(colMeans(Pars_extract_set$pi_bad2_vect)))
+  
+  # a <- y_pred_change %>% apply(2, quantile, probs = 0.5, na.rm = TRUE)
+  # a %>% length()
+  saveRDS(data_plot_model_pred, "Data4PlottingPosteriorChecks.rds")
+  saveRDS(data_plot_model_pred_gen, "Data4PlottingPosteriorChecks_genotype.rds")
+  saveRDS(lr1_mat, "Data4PlottingLearningRates.rds")
+  saveRDS(prec_weights_lr_mat, "Data4PlottingPrecWeightedLearningRates.rds")
+  saveRDS(pi1_mat, "Data4PlottingOutcomePrecision.rds")
+  saveRDS(data_group, "Data_group_with_predictions.rds")
+  saveRDS(data_beh, "Data_beh_with_predictions.rds")
+}
+
+
+
+
+
+
+```
+
+Plot model predictions for investment and change
+```{r Plot model predictions for investment and change}
+
+
+
+# plot model predictions  across time -------------------------------------------------
+data_good <- data_beh[data_beh$Trustee =="Good",]
+data_bad <- data_beh[data_beh$Trustee =="Bad",]
+
+
+g_investment_smooth_pred <- ggplot() +
+  stat_smooth(data = data_good, aes(x = Trial, y = predictions, group = Treatment, colour = Treatment)) +
+  stat_summary(data = data_good, aes(x = Trial, y = Investment, group = Treatment, colour = Treatment), 
+               geom = "point", fun.y = mean, shape = 17, size = 3)  +
+  stat_smooth(data = data_bad, aes(x = Trial, y = predictions, group = Treatment, colour = Treatment)) +
+  stat_summary(data = data_bad, aes(x = Trial, y = Investment, group = Treatment, colour = Treatment), 
+               geom = "point", fun.y = mean, shape = 17, size = 3)  + 
+  theme_Publication() +
+  
+  theme(axis.ticks.x = element_blank(),
+        legend.position = "none",
+        panel.grid.major  = element_blank()) +
+  ylab("Investment") +  xlab("Trials")+ discrete_scale("colour","Publication",manual_pal(values = c("#386cb0","#fdb462")))
+
+g_legend_pred <- get_legend(g_investment_smooth_pred + 
+                              theme(legend.position = "right",
+                                    legend.key = element_rect(colour = NA),
+                                    # legend.direction = "horizontal",
+                                    legend.key.size= unit(0.2, "cm"),
+                                    # legend.margin = unit(0, "cm"),
+                                    legend.title = element_text(face="italic")))
+
+
+
+data_beh_pp_abschange <- data_beh %>% 
+  group_by(Trial, Treatment) %>% 
+  summarize(N = n(),
+            predictions_abschange_ci5_se = sd(predictions_abschange_ci5)/sqrt(N),
+            predictions_abschange_ci5 = mean(predictions_abschange_ci5),
+            
+            predictions_abschange_ci025 = mean(predictions_abschange_ci025),
+            predictions_abschange_ci25 = mean(predictions_abschange_ci25),
+            predictions_abschange_ci75 = mean(predictions_abschange_ci75),
+            predictions_abschange_ci975 = mean(predictions_abschange_ci975))
+
+p_abs_change_pred <-data_beh %>% filter(!is.na(abs_change)) %>%
+  ggplot(aes(x = Trial, y = predictions_abschange_ci5, colour = Treatment)) +#
+  # stat_smooth(aes(group = Treatment)) + 
+  geom_ribbon(data= data_beh_pp_abschange, aes(x = Trial, colour = Treatment, ymin = predictions_abschange_ci5 -predictions_abschange_ci5_se, ymax = predictions_abschange_ci5+predictions_abschange_ci5_se),  fill = "#E6E6E6", alpha = 0.3)+
+  geom_line(data= data_beh_pp_abschange, aes(x = Trial, colour = Treatment, y = predictions_abschange_ci5))+
+  stat_summary(aes(y = abs_change, group = Treatment), geom = "point", fun.y = mean, shape = 17, size = 3) +
+  theme_Publication(base_size = 18) +theme(axis.ticks.x = element_blank(),
+                                           panel.grid.major  = element_blank(),
+                                           legend.position = "none") +
+  ylab("Posterior predicted\nmean absolute change in investment\nfrom previous trial (with Std. Dev)")  +  scale_colour_Publication() +  scale_fill_Publication() +scale_x_discrete(name = "Trials", limits=c(0,10,20)) 
+
+
+
+
+# stat_smooth(data = data_beh,aes(x = Trial, y = predictions_abschange,group = Treatment))
+p_abs_change_pred
+# plot_grid(g_investment_smooth, g_abs_change_time)
+```
+
+```{r pp change}
+# data_beh$predictions_change
+
+# data_beh$Backtransfer_f <- factor(data_beh$Backtransfer, levels = c(-1,1), labels = c("Betray", "Equalize"))
+data_change_id <- data_beh %>% filter(!is.na(Change)) %>% group_by(Treatment, Genotype, Backtransfer_f, ID) %>% summarise( Change = mean(Change))
+
+
+data_pred_change_id <- data_beh %>% filter(!is.na(predictions_change)) %>% 
+  group_by(Treatment, Genotype, Backtransfer_f, ID) %>% 
+  summarise( Change = mean(predictions_change),
+             change_ci025 = mean(predictions_change_ci025),
+             change_ci25 = mean(predictions_change_ci25),
+             change_ci5 = mean(predictions_change_ci5),
+             change_ci75 = mean(predictions_change_ci75),
+             change_ci975 = mean(predictions_change_ci975)             )
+data_pred_change <-  data_pred_change_id %>% 
+  group_by(Treatment, Genotype, Backtransfer_f) %>% 
+  summarise(N = n(),
+            mean_change = mean(Change),
+            change_ci5_se = sd(change_ci5),
+            change_ci025 = mean(change_ci025),
+            change_ci25 = mean(change_ci25),
+            change_ci5 = mean(change_ci5),
+            change_ci75 = mean(change_ci75),
+            change_ci975 = mean(change_ci975) ,
+            se_change = sd(Change))
+
+g_pp_change <- ggplot(data=data_pred_change) +
+  geom_hline(yintercept = 0, linetype = "dashed")+
+  geom_point(data = data_change_id, aes(x = Backtransfer_f, y = Change, fill= Treatment, colour= Treatment),  alpha = 0.3, position = position_jitterdodge(dodge.width= 0.9, jitter.width = 0.3), shape = 21, colour = "black", size = 2, stroke =1)+
+  
+  
+  # geom_errorbar(data= data_pred_change, aes(x = Backtransfer_f, ymin = change_ci5 - change_ci5_se, ymax = change_ci5 + change_ci5_se, group= Treatment), width = 0, position = position_dodge(0.9),size = 2)+
+  geom_errorbar(data= data_pred_change, aes(x = Backtransfer_f, ymin = mean_change - se_change, ymax = mean_change + se_change, group= Treatment), width = 0, position = position_dodge(0.9),size = 1, colour = "black")+
+  geom_point(data= data_pred_change, aes( x = Backtransfer_f, y = mean_change, group= Treatment, colour= Treatment), position = position_dodge(0.9), size = 3)+
+  # geom_bar(aes(x = Backtransfer_f, y = mean_change, group= Treatment, fill = Treatment), stat = "identity", position = position_dodge()) +
+  # geom_errorbar(aes(x = Backtransfer_f, ymin = mean_change - se_change, ymax = mean_change + se_change, group= Treatment), width = 0, position = position_dodge(0.9))+
+  theme_Publication(base_size = 18)  + theme(legend.position = "none",
+                                             axis.text.x = element_text(size=14),
+                                             panel.grid.major  = element_blank()) + #scale_x_discrete(labels = c("Betray", "Equalize")) + 
+  
+  ylab("Posterior Mean Change (with Std. Dev)")   +  xlab("Back transfer")  + scale_colour_Publication() + scale_fill_Publication()#
+
+
+
+
+g_pp_change_gen <- g_pp_change + facet_wrap(~Genotype)
+g_pp_change_gen
+
+g_investment_smooth_pred + facet_wrap(~Genotype)
+g_pp <- plot_grid(p_abs_change_pred, g_pp_change + facet_wrap(~Genotype), ncol = 2, rel_widths = c(1,1), labels = "auto")
+
+
+pp_title <- ggdraw() + draw_label(
+  "Posterior predictive plots",
+  x = 0,
+  hjust = -0.5
+)  
+plot_grid(pp_title, g_pp,  nrow = 2, rel_heights = c(0.2,1))
+
+
+g_pp
+
+
+
+```
+
+# precision weighted lr   ----------------
+
+
+
+```{r precision weights}
+data_prc_weights_lr_mean_id  <- 
+  data_beh %>% filter(!is.na(prec_weights)) %>%
+  group_by(ID) %>% 
+  summarize(Treatment=Treatment[1],
+            Genotype=Genotype[1],
+            Serum = Serum[1],
+            mean_perID_prec_weights_lr = mean(prec_weights_lr),
+            prec_weights_lr_ci025 = mean(prec_weights_lr_ci025),
+            prec_weights_lr_ci25 = mean(prec_weights_lr_ci25),
+            prec_weights_lr_ci5 = mean(prec_weights_lr_ci5),
+            prec_weights_lr_ci75 = mean(prec_weights_lr_ci75),
+            prec_weights_lr_ci975 = mean(prec_weights_lr_ci975)) 
+data_prc_weights_lr_mean <- data_prc_weights_lr_mean_id %>% 
+  group_by(Treatment, Genotype) %>% 
+  summarize(N =n(),
+            mean_prec_weights_lr = mean(mean_perID_prec_weights_lr),
+            se_prec_weights_lr = sd(mean_perID_prec_weights_lr)/sqrt(N),
+            prec_weights_lr_ci025 = mean(prec_weights_lr_ci025),
+            prec_weights_lr_ci25 = mean(prec_weights_lr_ci25),
+            prec_weights_lr_ci5 = mean(prec_weights_lr_ci5),
+            prec_weights_lr_ci75 = mean(prec_weights_lr_ci75),
+            prec_weights_lr_ci975 = mean(prec_weights_lr_ci975)) 
+g_prc_weights_lr_mean <- 
+  data_prc_weights_lr_mean %>% 
+  ggplot(aes(x=Treatment)) +
+  geom_point(data = data_prc_weights_lr_mean_id, aes(y = prec_weights_lr_ci5, fill= Treatment, colour= Treatment),  alpha = 0.3, position = position_jitterdodge(dodge.width= 0.9, jitter.width = 0.3), shape = 21, colour = "black", size = 2, stroke =1) +   
+  
+  geom_errorbar(aes(ymin = prec_weights_lr_ci25, ymax = prec_weights_lr_ci75), width = 0, size =2)+
+  geom_errorbar(aes(ymin = prec_weights_lr_ci025, ymax = prec_weights_lr_ci975), width = 0, size =1)+
+  geom_point(aes(x=Treatment, y= prec_weights_lr_ci5, fill = Treatment), position = position_dodge(1), shape = 21, colour = "black",size = 4)  +
+  
+  facet_wrap(~Genotype) + theme_Publication() +  theme(axis.text.x = element_blank(),
+                                                       axis.ticks.x = element_blank(),
+                                                       legend.position = "none",
+                                                       panel.grid.major  = element_blank())+
+  # title = element_blank()) +
+  xlab("")+
+  ylab(expression(paste("Mean precision-weights - ", bold(bar("\U1D713")))))  +     scale_colour_Publication()  + scale_fill_Publication()
+
+g_prc_weights_lr_mean
+
+# data_prc_weights_mean_id
+# if prec_weights_lr_sul does not exists you need to calculate it again from prec_weights_lr_mat
+
+# prec_weights_lr_mat %>% dim()
+
+prec_weights_lr_mat <- readRDS("Data4PlottingPrecWeightedLearningRates.rds")
+sd_per_sample = prec_weights_lr_mat %>%  apply(1, sd)
+prec_weights_lr_mat %>% glimpse
+prec_weights_lr_mat_d <- prec_weights_lr_mat/sd_per_sample
+prec_weights_lr_sul <- prec_weights_lr_mat_d %>% apply(1, function(x) { return(mean(x[data_beh$Treatment == "sulpiride"]) - mean(x[data_beh$Treatment != "sulpiride"]))})
+
+prec_weights_lr_ankk <- prec_weights_lr_mat_d %>% apply(1, function(x) { return(mean(x[data_beh$Genotype == "A1+"]) - mean(x[data_beh$Genotype != "A1+"]))})
+
+
+prec_weights_lr_sul_a1p <- prec_weights_lr_mat_d %>% apply(1, function(x) { return(mean(x[data_beh$Treatment == "sulpiride"  & data_beh$Genotype == "A1+"]) - mean(x[data_beh$Treatment != "sulpiride" & data_beh$Genotype == "A1+"]))})
+prec_weights_lr_sul_a1m <- prec_weights_lr_mat_d %>% apply(1, function(x) { return(mean(x[data_beh$Treatment == "sulpiride"& data_beh$Genotype == "A1-" ]) - mean(x[data_beh$Treatment != "sulpiride" & data_beh$Genotype == "A1-"]))})
+
+prec_weights_lr_sul_ankk <- prec_weights_lr_mat_d %>% 
+  apply(1, function(x) { 
+    d_sul_a1p = mean(x[data_beh$Treatment == "sulpiride"  & data_beh$Genotype == "A1+"]) - mean(x[data_beh$Treatment != "sulpiride" & data_beh$Genotype == "A1+"])
+    
+    d_sul_a1m = mean(x[data_beh$Treatment == "sulpiride"  & data_beh$Genotype != "A1+"]) - mean(x[data_beh$Treatment != "sulpiride" & data_beh$Genotype != "A1+"])
+    
+    return(
+      d_sul_a1p - d_sul_a1m
+    )
+  }
+  )
+prec_weights_lr_sul_a1m <- prec_weights_lr_mat_d %>% apply(1, function(x) { return(mean(x[data_beh$Treatment == "sulpiride"& data_beh$Genotype == "A1-" ]) - mean(x[data_beh$Treatment != "sulpiride" & data_beh$Genotype == "A1-"]))})
+
+prec_weights_lr_sul%>% sf(1)
+prec_weights_lr_sul_ankk %>% sf(1)
+prec_weights_lr_sul_a1p %>% sf(1)
+prec_weights_lr_sul_a1m %>% sf(1)
+
+data_stat_prc_weights_lr <- bind_cols(c_d_sul = prec_weights_lr_sul,
+                                      b_d_sul_a1p = prec_weights_lr_sul_a1p,
+                                      a_d_sul_a1m = prec_weights_lr_sul_a1m) %>% 
+  # convert them to the long format, group, and get the posterior summaries
+  pivot_longer(everything()) %>%
+  group_by(name) %>% 
+  summarise(mean = mean(value),
+            ll   = quantile(value, prob = .025),
+            ul   = quantile(value, prob = .975),
+            lls   = quantile(value, prob = .25),
+            uls   = quantile(value, prob = .75)) 
+g_stat_prc_weights_lr <- data_stat_prc_weights_lr %>% ggplot(aes(x = mean, xmin = ll, xmax = ul, y = name)) +
+  geom_errorbar(aes(xmin = lls, xmax = uls), size = 1.5,color = "firebrick", width = 0)+
+  geom_vline(xintercept = 0, linetype="dashed") +
+  geom_pointrange(color = "firebrick") +
+  labs(y = NULL) + # subtitle = "Effect sizes (95% and 50% quantiles)", 
+  theme_Publication(base_size = 15) +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(size=12),
+        strip.background = element_rect(fill = "transparent", color = "transparent"),
+        axis.title.x =  element_blank()) +
+  scale_y_discrete(labels = rev(c("S - P", "S - P in A1+", "S - P in A1-")) )
+
+# plot_grid(g_abs_change_time + theme(legend.position = "none"), g_stats, nrow = 2, rel_heights = c(1,.3)
+
+
+
+
+```
+
+```{r prc weights with serum, fig.width= 4}
+
+# data_beh %>% glimpse()
+
+data_serum_id <- data_prc_weights_lr_mean_id %>% filter(Treatment == "sulpiride")
+
+g_serum <-data_serum_id %>% filter(Genotype == "A1+") %>%  ggplot(aes(x=log(Serum), y = prec_weights_lr_ci5)) + 
+  geom_point(fill= "#fdb462",  alpha = 0.3, shape = 21, colour = "black", size = 2, stroke =1) + 
+  geom_smooth(method = "lm", se = FALSE, colour = "black")+ theme_Publication() +  theme(axis.text.x = element_blank(),
+                                                                                         axis.ticks.x = element_blank(),
+                                                                                         legend.position = "none",
+                                                                                         panel.grid.major  = element_blank())+
+  # title = element_blank()) +
+  ylab(expression(paste("Mean precision-weights - ", bold(bar("\U1D713")))))   + xlab(expression("Serum")) + facet_wrap(~Genotype)+
+  scale_y_continuous(breaks = c(0.5,1,1.5))
+
+
+g_serum
+data_serum_id$logserum_s <- scale(log(data_serum_id$Serum))
+data_serum_id$serum_s <- scale(data_serum_id$Serum)
+data_serum_id$prec_weights_lr_ci5_s <- scale(data_serum_id$prec_weights_lr_ci5)
+
+model1 <- lm(data = data_serum_id, mean_perID_prec_weights_lr_s ~ serum_s*Genotype )
+
+model1 <- lm(data = data_serum_id, log(prec_weights_lr_ci5) ~ logserum_s*Genotype )
+summary(model1)
+data_sul <- data_beh %>% filter(Treatment == "sulpiride")
+data_sul$logserum_s <- ave(log(data_sul$Serum), FUN = scale)
+data_sul$prec_weights_lr_s <- ave(data_sul$prec_weights_lr, FUN = scale)
+data_sul$prec_weights_lr_ci5_s <- ave(data_sul$prec_weights_lr_ci5, FUN = scale)
+data_sul$prec_weights_s <- ave(data_sul$prec_weights, FUN = scale)
+
+model1_serum <- lme(data = data_sul, prec_weights ~ logserum_s*Genotype, random = ~ 1|ID)
+model1_serum <- lme(data = data_sul, prec_weights_lr_ci5_s ~ logserum_s*Genotype, random = ~ 1|ID)
+
+model1_serum <- lm(data = data_serum_id, prec_weights_lr_ci5 ~ logserum_s*Genotype)
+
+model1_serum <- lme(data = data_sul, prec_weights_lr_ci5_s ~ logserum_s*Genotype*Trustee_c, random = ~ Trustee_c|ID)
+model1_serum %>% summary() %>%  coef() %>% as.data.frame()%>% round(3) %>%   write.csv("lm_serum.csv")
+options(mc.cores=4)
+if (!file.exists("Behavioral Models/brm_serum2.rds")) {
+  brms_serum2 <- brm(data = data_sul, prec_weights_lr_ci5_s ~ logserum_s*Genotype + (1|ID),
+                     prior = c(set_prior("normal(0,1)", class = "b"),
+                               set_prior("cauchy(0,2)", class = "sd")),
+                     warmup = 500, iter = 2000, chains =4)
+  saveRDS(brms_serum2, file ="Behavioral Models/brm_serum2.rds")
+} else brms_serum2 <- readRDS(file ="Behavioral Models/brm_serum2.rds")
+
+brms_serum2%>% fixef()%>% round(3) %>%   write.csv("brms_serum.csv")
+
+post_serum = posterior_samples(brms_serum2)
+post_serum <- post_serum %>% mutate(sd_total = sqrt(sd_ID__Intercept^2 + sigma^2))
+post_serum <- post_serum/post_serum$sd_total
+# sd_total post_serum$sd_ID__Intercept
+(post_serum$b_logserum_s +1/2*post_serum$`b_logserum_s:GenotypeA1M`) %>% sf(1)
+post_serum$b_logserum_s %>% sf(1)
+(post_serum$b_logserum_s +post_serum$`b_logserum_s:GenotypeA1M` )%>% sf(1)
+g_stat_prc_weights_lr_serum <- bind_cols(c_d_sul = post_serum$b_logserum_s +1/2*post_serum$`b_logserum_s:GenotypeA1M` ,
+                                         b_d_sul_a1p = post_serum$b_logserum_s,
+                                         a_d_sul_a1m = post_serum$b_logserum_s +post_serum$`b_logserum_s:GenotypeA1M`) %>% 
+  # convert them to the long format, group, and get the posterior summaries
+  pivot_longer(everything()) %>%
+  group_by(name) %>% 
+  summarise(mean = mean(value),
+            ll   = quantile(value, prob = .025),
+            ul   = quantile(value, prob = .975),
+            lls   = quantile(value, prob = .25),
+            uls   = quantile(value, prob = .75)) %>%  
+  ggplot(aes(x = mean, xmin = ll, xmax = ul, y = name)) +
+  geom_errorbar(aes(xmin = lls, xmax = uls), size = 1.5,color = "firebrick", width = 0)+
+  geom_vline(xintercept = 0, linetype="dashed") +
+  geom_pointrange(color = "firebrick") +
+  labs(y = NULL) + # subtitle = "Effect sizes (95% and 50% quantiles)", 
+  theme_Publication(base_size = 15) +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(size=12),
+        strip.background = element_rect(fill = "transparent", color = "transparent"),
+        axis.title.x =  element_blank()) +
+  scale_y_discrete(labels = rev(c("Serum", "Serum in A1+", "Serum in A1-")) ) +
+  scale_x_continuous(breaks = c(0,0.3,0.6))
+
+
+```
+
+
+# modelling results figure
+
+```{r modeling figure}
+
+ylimits = c(-7,0)
+
+g_om <- plot_grid(
+  g_gen_om_mean + coord_cartesian(ylim=ylimits)  + facet_wrap(~ankk),
+  g_prc_weights_lr_mean ,
+  g_serum,
+  rel_widths = c(0.7, 1,0.7,0.7), nrow = 1, labels = c("a", "b", "c"))
+
+title <- ggdraw() + 
+  draw_label(
+    "Effect sizes (means with 50% and 95% CrI)",
+    fontface = 'bold',
+    x = 0,
+    hjust = -0.7
+  ) 
+
+g_om_stats <- plot_grid(g_om,
+                        plot_grid(g_stats_om_ankk, g_stat_prc_weights_lr, g_stat_prc_weights_lr_serum, rel_widths = c(1,1,1), nrow = 1),
+                        title,
+                        nrow = 3, rel_heights = c(1,0.4,0.1))
+
+
+g_prc_weights <- plot_grid(
+  g_prc_weights_lr_mean, 
+  g_serum, labels = c("c", "d"),
+  rel_widths = c(1,1), nrow = 1)
+g_prc_all <- plot_grid(g_prc_weights,
+                       plot_grid(g_stat_prc_weights_lr, 
+                                 g_stat_prc_weights_lr_serum,
+                                 nrow = 1, labels = c("g","h")),
+                       nrow = 2, rel_heights = c(1,0.4))
+
+
+g_figure3_modelling_results <- plot_grid(g_om_stats,g_prc_all, rel_widths = c(1,0.8))
+
+g_figure3_modelling_results_different_arrangement <-
+  
+  plot_grid(
+    #row 1
+    title1,  
+    g_om,
+    #row 2
+    title_d,
+    plot_grid(g_stats_om_ankk, g_stats_om_a1_p_trustee, labels = c("c", "d") , rel_widths = c(0.85,1)),
+    #row 3
+    title2,
+    plot_grid(  g_prc_weights_lr_mean, 
+                g_serum, labels = c("e", "f"),
+                rel_widths = c(1,1), nrow = 1),
+    #row 4
+    title_d,
+    plot_grid(g_stat_prc_weights_lr, 
+              g_stat_prc_weights_lr_serum,
+              nrow = 1, labels = c("g","h")),
+    nrow = 8, rel_heights = c(0.2,1,0.2,0.4,0.2,1,0.2,0.4)) 
+
+title1 <- ggdraw() + 
+  draw_label(
+    "Effects of sulpiride on Belief Volatility",
+    x = 0,
+    hjust = 0.5
+  )
+
+title_d <-
+  ggdraw() + 
+  draw_label(
+    "Effect sizes",
+    x = 0,
+    hjust = 0.5
+  )
+title2 <-  ggdraw() + 
+  draw_label(
+    "Effects of sulpiride on Precision-weighted learning rates",
+    x = 0,
+    hjust = 0
+  )
+
+model_com_title <-  ggdraw() + 
+  draw_label(
+    "Model Comparison",
+    x = 0,
+    hjust = -0.5
+  ) 
+
+g_om_trustee <- plot_grid(
+  plot_grid(g_gen_om1_a1p+ coord_cartesian(ylim=ylimits) ,
+            g_gen_om2_a1p+ coord_cartesian(ylim=ylimits) , nrow = 1),
+  g_stats_om_a1_p_trustee, nrow = 2, rel_widths = c(1,0.3))
+
+```
+
+```{r gam plot with incongruent trials}
+
+
+g_model_full <- plot_grid(g_gen_noise + facet_wrap(~ankk),
+                          g_gen_gam + facet_wrap(~ankk),
+                          # g_gen_mu0 + facet_wrap(~ankk),
+                          ncol = 2) 
+
+plot_grid(g_om, g_model_full, nrow= 2)
+g_legend_model <- get_legend(g_gen_om_mean + 
+                               theme(legend.position = "right",
+                                     legend.key = element_rect(colour = NA),
+                                     legend.direction = "horizontal",
+                                     legend.key.size= unit(0.2, "cm"),
+                                     # legend.margin = unit(0, "cm"),
+                                     legend.title = element_blank()))
+plot_grid(g_model, g_legend_model, rel_widths = c(1,.2))
+g_gam <- g_gen_gam + facet_wrap(~ankk)
+
+
+
+g_serum
+
+```
+
+
+# model posterior predictive checks  ----------------
+
+plotting the posterior predictive checks for reciprocity and incongruency
+```{r, fig.width = 10, fig.height = 9, echo=FALSE, warning= FALSE}
+
+
+
+
+if(!exists("theme_Publication", mode = "function")) source("theme_functions.r")
+g_pred_incon <- ggplot(data_plot_model_pred, aes(x = drug, y = mean_incon))+
+  geom_errorbar(aes(ymin = mean_incon - se_incon, ymax = mean_incon + se_incon), size = 1.5, width = 0) + 
+  geom_point(aes(x=drug, y= mean_incon, colour = drug), size = 5, shape = 18)   +
+  theme_Publication() +theme(axis.text.x = element_blank(),
+                             axis.ticks.x = element_blank(),
+                             panel.grid.major  = element_blank(),
+                             legend.key.size = unit(0.5, "cm"),
+                             legend.position= "none",
+                             axis.title.x = element_blank()) +
+  
+  
+  ylab("Incongruent Trials")   +     scale_colour_Publication()
+
+g_pred_pos <- ggplot(data_plot_model_pred, aes(x = drug, y = mean_posrec))+
+  geom_errorbar(aes(ymin = mean_posrec - se_posrec, ymax = mean_posrec + se_posrec), width = 0, size = 1.5)+
+  geom_point(aes(x=drug, y= mean_posrec, colour = drug), size = 5, shape = 18)   +
+  theme_Publication() + theme(axis.text.x = element_blank(),
+                              legend.position = "none",
+                              axis.ticks.x = element_blank(),
+                              panel.grid.major  = element_blank(),
+                              axis.title.x = element_blank()) +
+  
+  ylab("Reciprocal Trials")   +     scale_colour_Publication()# '' + 
+# coord_cartesian(ylim = c(13,19))
+# g_pred_pos
+
+g_pred_neg <- ggplot(data_plot_model_pred, aes(x = drug, y = mean_negrec))+
+  geom_errorbar(aes(ymin = mean_negrec - se_negrec, ymax = mean_negrec + se_negrec), width = 0, size = 1.5)+
+  geom_point(aes(x=drug, y= mean_negrec, colour = drug), size = 5, shape = 18)   +
+  theme_Publication() + theme(axis.text.x = element_blank(),
+                              legend.position = "none",
+                              axis.ticks.x = element_blank(),
+                              panel.grid.major  = element_blank(),
+                              axis.title.x = element_blank()) +
+  
+  ylab("Reciprocal Trials")   +     scale_colour_Publication()# '' + 
+
+
+# coord_cartesian(ylim = c(13,19))
+# g_pred_neg
+g_pred_rec <- ggplot(data_plot_model_pred, aes(x = drug, y = mean_rec))+
+  geom_errorbar(aes(ymin = mean_rec - se_rec, ymax = mean_rec + se_rec), width = 0, size = 1.5)+
+  geom_point(aes(x=drug, y= mean_rec, colour = drug), size = 5, shape = 18)   +
+  theme_Publication() + theme(axis.text.x = element_blank(),
+                              legend.position = "none",
+                              axis.ticks.x = element_blank(),
+                              panel.grid.major  = element_blank(),
+                              axis.title.x = element_blank()) +
+  
+  ylab("Reciprocal Trials")   +     scale_colour_Publication()# '' + 
+
+# coord_cartesian(ylim = c(13,19))
+# g_pred_rec
+# 
+# 
+# ```{r}
+# fig_trials <- plot_grid(g_incon, g_rec, rel_widths = c(1, 1.6))
+# fig_trials
+
+
+g_pred_incon_gen <- ggplot(data_plot_model_pred_gen, aes(x = drug, y = mean_incon))+
+  geom_errorbar(aes(ymin = mean_incon - se_incon, ymax = mean_incon + se_incon, group = drug), width = 0, size = 1.5, position = position_dodge(0.2)) + 
+  geom_point(aes(x=drug, y= mean_incon, colour = drug), size = 5, position = position_dodge(0.2), shape = 18)   +
+  facet_wrap(~ankk) + ylab("")  +     theme_Publication() +theme(axis.text.x = element_blank(),
+                                                                 axis.ticks.x = element_blank(),
+                                                                 legend.position = "none",
+                                                                 panel.grid.major  = element_blank(),
+                                                                 axis.title.x = element_blank()) +
+  scale_colour_Publication()
+# coord_cartesian(ylim = c(0,10))
+# g_pred_incon_gen
+
+
+
+g_pred_rec_gen  <- ggplot(data_plot_model_pred_gen, aes(x = drug, y = mean_rec))+
+  geom_errorbar(aes(ymin = mean_rec - se_rec, ymax = mean_rec + se_rec), width = 0, size =1.5)+
+  geom_point(aes(x=drug, y= mean_rec, colour = drug), size = 5, shape = 18)   +
+  facet_wrap(~ankk) + theme_Publication() +theme(axis.text.x = element_blank(),
+                                                 axis.ticks.x = element_blank(),
+                                                 legend.position = "none",
+                                                 panel.grid.major  = element_blank(),
+                                                 axis.title.x = element_blank(),
+                                                 title = element_blank()) +
+  ylab("")  +    scale_colour_Publication() 
+# g_pred_rec_gen 
+
+g_pred_posrec_gen  <- ggplot(data_plot_model_pred_gen, aes(x = drug, y = mean_posrec))+
+  geom_errorbar(aes(ymin = mean_posrec - se_posrec, ymax = mean_posrec + se_posrec), width = 0, size =1.5)+
+  geom_point(aes(x=drug, y= mean_posrec, colour = drug), size = 5, shape = 18)   +
+  facet_wrap(~ankk) + theme_Publication() +theme(axis.text.x = element_blank(),
+                                                 axis.ticks.x = element_blank(),
+                                                 legend.position = "none",
+                                                 panel.grid.major  = element_blank(),
+                                                 axis.title.x = element_blank(),
+                                                 title = element_blank()) +
+  ylab("")  +    scale_colour_Publication() 
+g_pred_negrec_gen  <- ggplot(data_plot_model_pred_gen, aes(x = drug, y = mean_negrec))+
+  geom_errorbar(aes(ymin = mean_negrec - se_negrec, ymax = mean_negrec + se_negrec), width = 0, size =1.5)+
+  geom_point(aes(x=drug, y= mean_negrec, colour = drug), size = 5, shape = 18)  +
+  facet_wrap(~ankk) + theme_Publication() +theme(axis.text.x = element_blank(),
+                                                 axis.ticks.x = element_blank(),
+                                                 legend.position = "none",
+                                                 panel.grid.major  = element_blank(),
+                                                 axis.title.x = element_blank(),
+                                                 title = element_blank()) +
+  ylab("")  +    scale_colour_Publication() 
+
+g_legend <- get_legend(g_pred_rec_gen + 
+                         theme(legend.position = "right",
+                               legend.key = element_rect(colour = NA),
+                               legend.direction = "horizontal",
+                               legend.key.size= unit(0.2, "cm"),
+                               # legend.margin = unit(0, "cm"),
+                               legend.title = element_blank()))
+
+
+
+
+g_pred_trials_gen <- plot_grid(
+  plot_grid(g_pred_rec+labs(title=""),g_pred_rec_gen, ncol=2, rel_widths = c(0.6,1) , labels = c('a','b'), label_size = 20),
+  plot_grid(g_pred_incon+labs(title=""),g_pred_incon_gen, ncol=2, rel_widths = c(0.6,1),labels = c('c','d'), label_size = 20), 
+  g_legend,
+  ncol =1, rel_heights = c(1,1,0.1)
+)  
+
+g_pred_trials_gen
+
+
+
+``` 
+
+# single round social interaction tasks
+```{r, fig.width = 7, fig.height = 8}
+
+# # negative reciprocity plot ----------------------------------------------------
+# 
+
+levels(data_beh_SI$Treatment) <- c("control", "sulpiride") 
+
+savemodelname = "brms_negrec_genotype.rds"
+if(!file.exists(paste("Behavioral Models/", savemodelname, sep = ""))){
+  brms_negrec_genotype <- update(mc.negrec.treatment, 
+                     formula. = ~ . + Treatment*genotype, 
+                     newdata = data_beh_SI_neg_rec_analysis)
+  saveRDS(brms_negrec_genotype, file = paste("Behavioral Models/", savemodelname, sep=""))
+} else brms_negrec_genotype <- readRDS("Behavioral Models/brms_negrec_genotype.rds")
+
+data_beh_SI_neg_rec_analysis <- data_beh_SI  %>% filter(BDoesTransfer ==0, !is.na(BDoesTransfer))
+# data_beh_SI_neg_rec_analysis
+brms_negrec_genotype  %>% fixef()%>% round(3) %>%   write.csv("brms_negrec_genotype.csv")
+
+
+
+model_pp <- fitted(brms_negrec_genotype, newdata = data_beh_SI_neg_rec_analysis, re_formula = NA, summary = FALSE)
+# a<- model_pp %>% apply(2, quantile, probs = c(0.5))
+# model_pp %>% glimpse()
+model_pp_neg_rec <- data_beh_SI_neg_rec_analysis
+model_pp_neg_rec <- model_pp_neg_rec %>% mutate(Est = model_pp %>% apply(2, quantile, probs = c(0.5)), 
+                                                Q2.5 =model_pp %>% apply(2, quantile, probs = c(0.025)),
+                                                Q25 = model_pp %>% apply(2, quantile, probs = c(0.25)),
+                                                Q75 = model_pp %>% apply(2, quantile, probs = c(0.75)), 
+                                                Q975 = model_pp %>% apply(2, quantile, probs = c(0.975)))
+# model_pp_neg_rec %>% glimpse()
+# model_pp_neg_rec
+# plot(model_pp_all$Est[model_pp_all$ID == 1], model_pp_all$Est[model_pp_all$ID == 5])
+# model_pp <- cbind(model_pp, data_beh)
+data_neg_rec_id <-  model_pp_neg_rec  %>% group_by(ID, Treatment, genotype) %>% 
+  summarize(mean_pun_id = mean(Punishment))
+g_punishment<- ggplot(data= model_pp_neg_rec) +
+  geom_point(data = data_neg_rec_id, aes(x = Treatment, y = mean_pun_id, fill= Treatment, colour= Treatment),  alpha = 0.3, position = position_jitterdodge(dodge.width= 0.9, jitter.width = 0.5), shape = 21, colour = "black", size = 2, stroke =1)+
+  
+  # geom_errorbar(data= model_pp_rec, aes(x = Treatment, ymin = Q25, ymax = Q75, group= Treatment), width = 0, position = position_dodge(0.9),size = 2)+
+  geom_errorbar(aes(x = Treatment, ymin = Q2.5, ymax = Q975, group= Treatment), width = 0, position = position_dodge(0.9),size = 1.5)+
+  geom_point(aes(x = Treatment, y = Est, fill= Treatment, colour= Treatment), position = position_dodge(0.9), size = 3, shape= 21, colour = "black")+
+  # geom_bar(aes(x = Backtransfer_f, y = mean_change, group= Treatment, fill = Treatment), stat = "identity", position = position_dodge()) +
+  # geom_errorbar(aes(x = Backtransfer_f, ymin = mean_change - se_change, ymax = mean_change + se_change, group= Treatment), width = 0, position = position_dodge(0.9))+
+  theme_Publication(base_size = 15) + theme(legend.position = "none",
+                                            axis.text.x = element_blank(),
+                                            axis.ticks.x = element_blank(),
+                                            axis.title.x = element_blank(),
+                                            panel.grid.major  = element_blank()) + #scale_x_discrete(labels = c("Betray", "Equalize")) + 
+  
+  ylab("Mean Punishment")   +   scale_colour_Publication() + scale_fill_Publication()#
+
+
+if (FALSE) {
+  post = posterior_samples(brms_negrec_genotype )
+  # back to absolute scale 
+  
+  
+  # turn to effect size
+  post <- post %>% mutate(sd_total = sqrt(sd_ID__Intercept^2 + sigma^2))
+  post <- post/post$sd_total
+  post_neg_rec <- post
+  d_sul <- (post$b_Treatmentsulpride  +  1/2*post$`b_Treatmentsulpride:genotypeA1M`) 
+  d_sul%>% sf(1)
+  d_sul_a1p<- (post$b_Treatmentsulpride) 
+  d_sul_a1p %>% sf(1)
+  d_sul_a1m<- (post$b_Treatmentsulpride +  post$`b_Treatmentsulpride:genotypeA1M`) 
+  d_sul_a1m %>% sf(1)
+  
+  
+}
+
+
+g_stats_negrec <- bind_cols(C_Sul = d_sul,
+                            B_Sul =d_sul_a1p,
+                            A_Sul =d_sul_a1m) %>% 
+  # convert them to the long format, group, and get the posterior summaries
+  pivot_longer(everything()) %>%
+  group_by(name) %>% 
+  summarise(mean = mean(value),
+            ll   = quantile(value, prob = .025),
+            ul   = quantile(value, prob = .975),
+            lls   = quantile(value, prob = .25),
+            uls   = quantile(value, prob = .75)) %>%  # since the `key` variable is really two variables in one, here we split them up
+  
+  
+  # plot!
+  ggplot(aes(x = mean, xmin = ll, xmax = ul, y = name)) +
+  geom_errorbar(aes(xmin = lls, xmax = uls), size = 1.5,color = "firebrick", width = 0)+
+  geom_vline(xintercept = 0, linetype="dashed") +
+  geom_pointrange(color = "firebrick") +
+  labs(y = NULL) + # subtitle = "Effect sizes (95% and 50% quantiles)", 
+  theme_Publication(base_size = 15) +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(size=12, ),
+        strip.background = element_rect(fill = "transparent", color = "transparent"),
+        axis.title.x =  element_blank()) +
+  scale_y_discrete(labels = rev(c("S - P", "S - P in A1+", "S - P in A1-")) ) 
+
+
+
+```
+
+
+```{r positive reciprocity}
+# positive reciprocity ####
+
+savemodelname = "brms_posrec_genotype.rds"
+if(!file.exists(paste("Behavioral Models/", savemodelname, sep = ""))){
+  brms_posrec_genotype <- update(mc.posrec.treatment, 
+                               formula. = ~ . + Treatment*genotype, 
+                               newdata = data_beh_SI_pos_rec_analysis)
+  saveRDS(brms_posrec_genotype, file = paste("Behavioral Models/", savemodelname, sep=""))
+}else brms_posrec_genotype <- readRDS("Behavioral Models/brms_posrec_genotype.rds")
+
+
+data_beh_SI_pos_rec_analysis <- data_beh_SI  %>% filter(Implement ==0, !is.na(Implement))
+
+# data_beh_SI_neg_rec_analysis
+brms_posrec_genotype  %>% fixef()%>% round(3) %>%   write.csv("brms_posrec_genotype.csv")
+
+
+
+model_pp <- fitted(brms_posrec_genotype, newdata = data_beh_SI_pos_rec_analysis, re_formula = NA, summary = FALSE)
+# a<- model_pp %>% apply(2, quantile, probs = c(0.5))
+# model_pp %>% glimpse()
+model_pp_pos_rec <- data_beh_SI_pos_rec_analysis
+model_pp_pos_rec <- model_pp_pos_rec %>% mutate(Est = model_pp %>% apply(2, quantile, probs = c(0.5)), 
+                                                Q2.5 =model_pp %>% apply(2, quantile, probs = c(0.025)),
+                                                Q25 = model_pp %>% apply(2, quantile, probs = c(0.25)),
+                                                Q75 = model_pp %>% apply(2, quantile, probs = c(0.75)), 
+                                                Q975 = model_pp %>% apply(2, quantile, probs = c(0.975)))
+# model_pp_neg_rec %>% glimpse()
+# model_pp_neg_rec
+# plot(model_pp_all$Est[model_pp_all$ID == 1], model_pp_all$Est[model_pp_all$ID == 5])
+# model_pp <- cbind(model_pp, data_beh)
+data_pos_rec_id <-  model_pp_pos_rec  %>% group_by(ID, Treatment, genotype) %>% 
+  summarize(mean_rew_id = mean(RewardA))
+
+g_reward <- ggplot(data= model_pp_pos_rec) +
+  geom_point(data = data_pos_rec_id, aes(x = Treatment, y = mean_rew_id, fill= Treatment, colour= Treatment),  alpha = 0.3, position = position_jitterdodge(dodge.width= 0.9, jitter.width = 0.5), shape = 21, colour = "black", size = 2, stroke =1)+
+  
+  # geom_errorbar(data= model_pp_rec, aes(x = Treatment, ymin = Q25, ymax = Q75, group= Treatment), width = 0, position = position_dodge(0.9),size = 2)+
+  geom_errorbar(aes(x = Treatment, ymin = Q2.5, ymax = Q975, group= Treatment), width = 0, position = position_dodge(0.9),size = 1.5)+
+  geom_point(aes(x = Treatment, y = Est, fill= Treatment, colour= Treatment), position = position_dodge(0.9), size = 3, shape= 21, colour = "black")+
+  # geom_bar(aes(x = Backtransfer_f, y = mean_change, group= Treatment, fill = Treatment), stat = "identity", position = position_dodge()) +
+  # geom_errorbar(aes(x = Backtransfer_f, ymin = mean_change - se_change, ymax = mean_change + se_change, group= Treatment), width = 0, position = position_dodge(0.9))+
+  theme_Publication(base_size = 15) + theme(legend.position = "none",
+                                            axis.text.x = element_blank(),
+                                            axis.ticks.x = element_blank(),
+                                            axis.title.x = element_blank(),
+                                            panel.grid.major  = element_blank()) + #scale_x_discrete(labels = c("Betray", "Equalize")) + 
+  
+  ylab("Mean Back-Transfer")   +  scale_colour_Publication() + scale_fill_Publication()#
+
+
+if (FALSE) {
+  post = posterior_samples(brms_posrec_genotype )
+  # back to absolute scale 
+  
+  
+  # turn to effect size
+  post <- post %>% mutate(sd_total = sqrt(sd_ID__Intercept^2 + sigma^2))
+  post <- post/post$sd_total
+  post_pos_rec <- post
+  d_sul <- (post$b_Treatmentsulpride  +  1/2*post$`b_Treatmentsulpride:genotypeA1M`) 
+  d_sul%>% sf(1)
+  d_sul_a1p<- (post$b_Treatmentsulpride) 
+  d_sul_a1p %>% sf(1)
+  d_sul_a1m<- (post$b_Treatmentsulpride +  post$`b_Treatmentsulpride:genotypeA1M`) 
+  d_sul_a1m %>% sf(1)
+  
+  
+}
+
+
+g_stats_posrec <- bind_cols(C_Sul = d_sul,
+                            B_Sul =d_sul_a1p,
+                            A_Sul =d_sul_a1m) %>% 
+  # convert them to the long format, group, and get the posterior summaries
+  pivot_longer(everything()) %>%
+  group_by(name) %>% 
+  summarise(mean = mean(value),
+            ll   = quantile(value, prob = .025),
+            ul   = quantile(value, prob = .975),
+            lls   = quantile(value, prob = .25),
+            uls   = quantile(value, prob = .75)) %>%  # since the `key` variable is really two variables in one, here we split them up
+  
+  
+  # plot!
+  ggplot(aes(x = mean, xmin = ll, xmax = ul, y = name)) +
+  geom_errorbar(aes(xmin = lls, xmax = uls), size = 1.5,color = "firebrick", width = 0)+
+  geom_vline(xintercept = 0, linetype="dashed") +
+  geom_pointrange(color = "firebrick") +
+  labs(y = NULL) + # subtitle = "Effect sizes (95% and 50% quantiles)", 
+  theme_Publication(base_size = 15) +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(size=12, ),
+        strip.background = element_rect(fill = "transparent", color = "transparent"),
+        axis.title.x =  element_blank()) +
+  scale_y_discrete(labels = rev(c("S - P", "S - P in A1+", "S - P in A1-")) ) 
+
+
+
+```
+
+# Supplementary figures and tables
+
+# plot investment ----  
+```{r plot investment across time,fig.width=11, echo=FALSE, message= FALSE}
+
+data_beh$Investment_f <-  factor(data_beh$Investment, ordered = TRUE)
+  
+savemodelname = 'brms_investment_trustee.rds'
+if(!file.exists(paste("Behavioral Models/", savemodelname, sep = ""))){
+ 
+m.investment.trustee <- brm(formula = Investment_f ~ Trustee + (Trustee|ID),
+                   data = data_beh, family = cumulative,
+                   prior = c(set_prior("normal(0,10)", class = "Intercept"),
+                     set_prior("cauchy(0,2)", class = "sd"),
+                             set_prior("normal(0,5)", class = "b"),
+                             set_prior("lkj(2)", class = "cor")),
+                   warmup = 1000, iter = 4000, chains =4,
+                   control = list(adapt_delta = 0.95))
+cat("Saving intercept ~ change in ", savemodelname, "... \n")
+saveRDS(m.investment.trustee, file = paste("Behavioral Models/", savemodelname, sep=""))
+}
+if(!exists("m.investment.trustee")) {
+  m.investment.trustee<-  readRDS(paste("Behavioral Models/", savemodelname, sep=""))
+}
+
+savemodelname = 'brms_investment_trial.rds'
+if(!file.exists(paste("Behavioral Models/", savemodelname, sep = ""))){
+m.investment.trial <- update(m.investment.trustee, formula. = ~ . + Trustee*Trial, newdata = data_beh)
+saveRDS(m.investment.trial, file = paste("Behavioral Models/", savemodelname, sep=""))
+}
+savemodelname = 'brms_investment_treatment.rds'
+if(!file.exists(paste("Behavioral Models/", savemodelname, sep = ""))){
+  m.investment.treatment <- update(m.investment.trustee, formula. = ~ . + Trustee*Trial*Treatment, newdata = data_beh)
+  saveRDS(m.investment.treatment, file = paste("Behavioral Models/", savemodelname, sep=""))
+  
+}
+
+savemodelname = 'brms_investment_genotype.rds'
+if(!file.exists(paste("Behavioral Models/", savemodelname, sep = ""))){
+  m.investment.genotype <- update(m.investment.trustee, formula. = ~ . + Trustee*Trial*Treatment*Genotype, newdata = data_beh)  
+  saveRDS(m.investment.genotype, file = paste("Behavioral Models/", savemodelname, sep=""))
+}
+  
+
+brms_investment_genotype <- readRDS("Behavioral Models/brms_investment_genotype.rds")
+
+data_beh_reduced <-  data_beh%>% filter(ID %in% c(22))
+new_data<- fitted(brms_investment_genotype , newdata =data_beh, re_formula = NA)
+# new_data_zinv <- new_data*sd(data_beh$abs_change, na.rm =  TRUE) + mean(data_beh$abs_change, na.rm=TRUE)
+new_data %>% glimpse()
+
+data_beh_reduced$Trustee == "Good" & data_beh_reduced$ID ==1
+
+new_data_temp <- apply(new_data,c(1,2),. %>% '*'(c(0:10)) %>% sum())
+new_data_est = new_data[data_beh_reduced$Trustee == "Good",1,]
+new_data_temp %>% glimpse()
+rownames(new_data_est) <- paste0("Trial", 1:nrow(new_data_est))
+colnames(new_data_est) <- paste0("Investment", 1:ncol(new_data_est))
+new_data_est[1:5, 1:5]
+
+df3 <- new_data_est %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("Var1") %>%
+  gather("Var2", "value", -Var1)
+df3<-df3 %>% rename(Trial = Var1, Investment = Var2, Perc = value)
+df3 <- df3 %>% mutate(Trial = as.numeric(Trial), Investment = as.numeric(Investment) -1 )
+
+df3%>% ggplot(aes(x = Investment, y = Trial, height = Perc, group = Trial)) + geom_ridgeline(alpha=0.25)
+
+
+```
+
+```{r some investment plots}
+
+
+
+new_data_temp <- cbind(data_beh,new_data_temp)
+
+new_data_temp_good <- new_data_temp %>% filter(Trustee == "Good")
+new_data_temp_bad <- new_data_temp %>% filter(Trustee == "Bad")
+
+
+prop_no <- 3
+c(0:10)/11
+df = tibble(Investment = c(0:10), densit_high_gam = pw(c(0:10)/11,2))
+
+df %>% ggplot(aes(x=Investment, y = 0, height = densit_high_gam)) + geom_ridgeline(mapping = NULL) +  scale_fill_Publication()
+prop_no = 25
+g_investment_ridge <-data_beh  %>% filter(ID %in% c(3,13,19,12,21,24)) %>% mutate(Trial_bin = ceiling(Trial/prop_no)*prop_no  )%>% filter(Trial_bin!=27) %>% 
+  ggplot() +
+  geom_density_ridges(aes( x = Investment, y = as.factor(Trial_bin) ,fill = Treatment, height = ..density..), alpha = 0.5 )  + 
+  theme_Publication() + scale_fill_Publication() + 
+  theme(legend.position = "none", axis.title.x = element_text(size = 15),axis.text.y = element_blank()) + 
+  ylab("") + xlab("Investment proportions") + scale_x_continuous(breaks = c(0,5,10)) + coord_cartesian(xlim = c(0,10)) + ylab("")
+
+gam_vect = c(0.5,1,5,20)
+df = tibble(seq01 = seq(from = 0, to = 1, by = 0.01))
+df %>% ggplot(aes(x = seq01, colour = gam_vect)) + stat_function(fun = function(c) pw(c,gam_vect))
+
+g_investment_ridge
+
+
+
+
+```
+
+```{r plot ridge as investment}
+
+prop_no = 3
+
+g_investment_ridge_a1m_g <-data_beh  %>% filter(Genotype == "A1-", Trustee == "Good") %>% mutate(Trial_bin = ceiling(Trial/prop_no)*prop_no  )%>% filter(Trial_bin!=27) %>% 
+  ggplot() +
+  geom_density_ridges(aes( x = Investment, y = as.factor(Trial_bin) ,fill = Treatment, height = ..density..), alpha = 0.5 )  + 
+  theme_Publication() + scale_fill_Publication() + theme(legend.position = "none", axis.title = element_text(size = 15)) + ylab("A1-") + xlab("Investment to the Good Trustee") + scale_x_continuous(breaks = c(0,5,10)) + coord_cartesian(xlim = c(0,10))
+
+g_investment_ridge_a1p_g <-data_beh  %>% filter(Genotype == "A1+", Trustee == "Good") %>% mutate(Trial_bin = ceiling(Trial/prop_no)*prop_no  )%>% filter(Trial_bin!=27) %>% 
+  ggplot() +
+  geom_density_ridges(aes( x = Investment, y = as.factor(Trial_bin) ,fill = Treatment, height = ..density..), alpha = 0.5 )  + 
+  theme_Publication() + scale_fill_Publication() + theme(legend.position = "none",axis.title = element_text(size = 15)) + ylab("A1+") + xlab("Investment to the Good Trustee")+   scale_x_continuous(breaks = c(0,5,10)) + coord_cartesian(xlim = c(0,10))
+
+
+g_investment_ridge_a1m_b <-data_beh  %>% filter(Genotype == "A1-", Trustee == "Bad") %>% mutate(Trial_bin = ceiling(Trial/prop_no)*prop_no  )%>% filter(Trial_bin!=27) %>% 
+  ggplot() +
+  geom_density_ridges(aes( x = Investment, y = as.factor(Trial_bin) ,fill = Treatment, height = ..density..), alpha = 0.5 )  + 
+  theme_Publication() + scale_fill_Publication() + theme(legend.position = "none", axis.title = element_text(size = 15)) + ylab("Trials") + xlab("Investment to the Bad Trustee")+   scale_x_continuous(breaks = c(0,5,10)) + coord_cartesian(xlim = c(0,10))
+
+g_investment_ridge_a1p_b <-data_beh  %>% filter(Genotype == "A1+", Trustee == "Bad") %>% mutate(Trial_bin = ceiling(Trial/prop_no)*prop_no  )%>% filter(Trial_bin!=27) %>% 
+  ggplot() +
+  geom_density_ridges(aes( x = Investment, y = as.factor(Trial_bin) ,fill = Treatment, height = ..density..), alpha = 0.5 )  + 
+  theme_Publication() + scale_fill_Publication() + theme(legend.position = "none",axis.title = element_text(size = 15)) + ylab("Trials")+ xlab("Investment to the Bad Trustee")+   scale_x_continuous(breaks = c(0,5,10)) + coord_cartesian(xlim = c(0,10))
+
+# g_investment_ridge_4 + theme(legend.position = "right",
+# legend.title =  element_blank() )
+title_general <- ggdraw() + draw_label("Investments (densities) and posterior means (lines)", fontface='bold', size = 18)
+title_plot_1 <- ggdraw() + draw_label("A1- subjects", fontface='bold')
+title_plot_2 <- ggdraw() + draw_label("A1+ subjects", fontface='bold')
+g_investment_all <- plot_grid(title_plot_1,
+                              plot_grid(g_investment_ridge_a1m_g, g_investment_ridge_a1m_b, ncol = 2),
+                              title_plot_2,
+                              plot_grid(g_investment_ridge_a1p_g, g_investment_ridge_a1p_b, ncol = 2),
+                              ncol = 1, rel_heights = c(0.2,1,0.2,1))
+
+
+# g_investment_ridge_2, g_investment_ridge_4, ncol =2)               
+```
+
+```{r overlay ridge with model}
+brms_investment_genotype <- readRDS("Behavioral Models/brms_investment_genotype.rds")
+
+new_data<- fitted(brms_investment_genotype , newdata =data_beh, re_formula = NA)
+new_data_temp <- apply(new_data,c(1,2),. %>% '*'(c(0:10)) %>% sum())
+# new_data_est %>% glimpse()
+new_data_temp <- cbind(data_beh,new_data_temp)
+
+
+
+# (a* c(1:11) - 1) %>% View()
+# new_data_temp <- cbind(data_beh,new_data_temp)
+prop_no <- 3
+new_data_temp <- new_data_temp %>% mutate(Trial_bin = ceiling(Trial/prop_no))%>% filter(Trial_bin!=9) 
+
+new_data_temp_good_a1m_g <- new_data_temp %>% filter(Trustee == "Good", Genotype == "A1-") %>% group_by(Treatment,Trial_bin) %>% summarize(mean_investment = mean(Investment))
+
+new_data_temp_good_a1m_b <- new_data_temp %>% filter(Trustee == "Bad", Genotype == "A1-") %>% group_by(Treatment,Trial_bin) %>% summarize(mean_investment = mean(Investment))
+
+new_data_temp_good_a1p_g <- new_data_temp %>% filter(Trustee == "Good", Genotype == "A1+") %>% group_by(Treatment,Trial_bin) %>% summarize(mean_investment = mean(Investment))
+
+new_data_temp_good_a1p_b <- new_data_temp %>% filter(Trustee == "Bad", Genotype == "A1+") %>% group_by(Treatment,Trial_bin) %>% summarize(mean_investment = mean(Investment))
+
+
+g_investment_ridge_a1m_g_pp <- g_investment_ridge_a1m_g + geom_line(data = new_data_temp_good_a1m_g, aes(x = mean_investment, y = Trial_bin, colour = Treatment), orientation = "y" , size = 2)+  scale_colour_Publication() #
+
+g_investment_ridge_a1m_b_pp <- g_investment_ridge_a1m_b + geom_line(data = new_data_temp_good_a1m_b, aes(x = mean_investment, y = Trial_bin, colour = Treatment), orientation = "y" , size = 2)+  scale_colour_Publication() #
+
+g_investment_ridge_a1p_g_pp <- g_investment_ridge_a1p_g + geom_line(data = new_data_temp_good_a1p_g, aes(x = mean_investment, y = Trial_bin, colour = Treatment), orientation = "y" , size = 2)+  scale_colour_Publication() #
+
+g_investment_ridge_a1p_b_pp <- g_investment_ridge_a1p_b + geom_line(data = new_data_temp_good_a1p_b, aes(x = mean_investment, y = Trial_bin, colour = Treatment), orientation = "y" , size = 2)+  scale_colour_Publication() #
+
+# new_data_temp_bad <- new_data_temp %>% filter(Trustee == "Bad")
+
+# new_data_temp_good_a1p %>%  mutate(Trial_bin = Trial_bin/3) %>% ggplot(aes(x = Trial_bin, y = mean_investment, colour = Treatment) ) + geom_line() + theme_Publication() + theme(panel.grid.major = element_blank()) + scale_colour_Publication() +  coord_flip() +
+# scale_y_continuous(breaks = c(0,5,10), limits = c(0,10)) 
+g_investment_ridge 
+
+title_general <- ggdraw() + draw_label("Investments (densities) and posterior predicted means (lines)", fontface='bold', size = 18)
+g_investment_all_withPPmeans <- plot_grid(title_general,
+                                          title_plot_1,
+                                          plot_grid(g_investment_ridge_a1m_g_pp, g_investment_ridge_a1m_b_pp, ncol = 2),
+                                          title_plot_2,
+                                          plot_grid(g_investment_ridge_a1p_g_pp, g_investment_ridge_a1p_b_pp, ncol = 2),
+                                          ncol = 1, rel_heights = c(0.2, 0.2,1,0.2,1))
+
+g_investment_all_withPPmeans
+```
+
+```{r investment plot second version}
+
+
+g_investment_ridge <-data_beh  %>% filter(Genotype == "A1-", Trustee == "Good") %>% mutate(Trial_bin = ceiling(Trial/prop_no)*prop_no  )%>% filter(Trial_bin!=27) %>% 
+  ggplot() +
+  geom_density_ridges(aes( x = Investment, y = as.factor(Trial_bin) ,fill = Treatment, height = ..density..), alpha = 0.5 )  + 
+  theme_Publication() + scale_fill_Publication() + theme(legend.position = "none", axis.title.x = element_text(size = 15)) + ylab("A1-") + xlab("Good Trustee") + scale_x_continuous(breaks = c(0,5,10)) + coord_cartesian(xlim = c(0,10))
+
+g_investment_ridge_2 <-data_beh  %>% filter(Genotype == "A1+", Trustee == "Good") %>% mutate(Trial_bin = ceiling(Trial/prop_no)*prop_no  )%>% filter(Trial_bin!=27) %>% 
+  ggplot() +
+  geom_density_ridges(aes( x = Investment, y = as.factor(Trial_bin) ,fill = Treatment, height = ..density..), alpha = 0.5 )  + 
+  theme_Publication() + scale_fill_Publication() + theme(legend.position = "none") + ylab("A1+") + xlab("Investment")+   scale_x_continuous(breaks = c(0,5,10)) + coord_cartesian(xlim = c(0,10))
+
+
+g_investment_ridge_3 <-data_beh  %>% filter(Genotype == "A1-", Trustee == "Bad") %>% mutate(Trial_bin = ceiling(Trial/prop_no)*prop_no  )%>% filter(Trial_bin!=27) %>% 
+  ggplot() +
+  geom_density_ridges(aes( x = Investment, y = as.factor(Trial_bin) ,fill = Treatment, height = ..density..), alpha = 0.5 )  + 
+  theme_Publication() + scale_fill_Publication() + theme(legend.position = "none", axis.title.x = element_text(size = 15)) + ylab("Trials") + xlab("Bad Trustee")+   scale_x_continuous(breaks = c(0,5,10)) + coord_cartesian(xlim = c(0,10))
+
+g_investment_ridge_4 <-data_beh  %>% filter(Genotype == "A1+", Trustee == "Bad") %>% mutate(Trial_bin = ceiling(Trial/prop_no)*prop_no  )%>% filter(Trial_bin!=27) %>% 
+  ggplot() +
+  geom_density_ridges(aes( x = Investment, y = as.factor(Trial_bin) ,fill = Treatment, height = ..density..), alpha = 0.5 )  + 
+  theme_Publication() + scale_fill_Publication() + theme(legend.position = "none") + ylab("Trials")+ xlab("Investment")+   scale_x_continuous(breaks = c(0,5,10)) + coord_cartesian(xlim = c(0,10))
+
+
+
+plot_grid(g_investment_ridge, g_investment_ridge_3, g_investment_ridge_2, g_investment_ridge_4, ncol =2)               
+
+#+
+geom_ribbon(data = new_data_temp_bad, aes(x = Trial, ymin = Q2.5, ymax = Q97.5),fill = "grey", alpha = 0.3 )+
+  stat_summary(data = data_good, aes(x = Trial, y = Investment, group = Treatment, colour = Treatment), 
+               geom = "point", fun.y = mean, shape = 17, size = 3)  +
+  geom_line(data = new_data_temp_good, aes(x = Trial, y = Estimate, group = Treatment, colour = Treatment)) +
+  
+  stat_summary(data = data_bad, aes(x = Trial, y = Investment, group = Treatment, colour = Treatment), 
+               geom = "point", fun.y = mean, shape = 17, size = 3)  + 
+  geom_line(data = new_data_temp_bad, aes(x = Trial, y = Estimate, group = Treatment, colour = Treatment)) +
+  theme_Publication() +
+  
+  theme(axis.ticks.x = element_blank(),
+        legend.position = "none",
+        panel.grid.major  = element_blank()) +
+  ylab("Investment") +  xlab("Trials")+ discrete_scale("colour","Publication",manual_pal(values = c("#386cb0","#fdb462")))
+g_investment_smooth + facet_wrap(~Genotype)
+
+source("theme_functions.r")
+g_investment_smooth <- ggplot() +
+  geom_ribbon(data = new_data_temp_good, aes(x = Trial, ymin = Q2.5, ymax = Q97.5),fill = "grey", alpha = 0.3 )+
+  geom_ribbon(data = new_data_temp_bad, aes(x = Trial, ymin = Q2.5, ymax = Q97.5),fill = "grey", alpha = 0.3 )+
+  stat_summary(data = data_good, aes(x = Trial, y = Investment, group = Treatment, colour = Treatment), 
+               geom = "point", fun.y = mean, shape = 17, size = 3)  +
+  geom_line(data = new_data_temp_good, aes(x = Trial, y = Estimate, group = Treatment, colour = Treatment)) +
+  
+  stat_summary(data = data_bad, aes(x = Trial, y = Investment, group = Treatment, colour = Treatment), 
+               geom = "point", fun.y = mean, shape = 17, size = 3)  + 
+  geom_line(data = new_data_temp_bad, aes(x = Trial, y = Estimate, group = Treatment, colour = Treatment)) +
+  theme_Publication() +
+  
+  theme(axis.ticks.x = element_blank(),
+        legend.position = "none",
+        panel.grid.major  = element_blank()) +
+  ylab("Investment") +  xlab("Trials")+ discrete_scale("colour","Publication",manual_pal(values = c("#386cb0","#fdb462")))
+g_investment_smooth + facet_wrap(~Genotype)
+
+
+g_legend_inv_plot <- get_legend(g_investment_smooth + 
+                                  theme(legend.position = "right",
+                                        legend.key = element_rect(colour = NA),
+                                        # legend.direction = "horizontal",
+                                        legend.key.size= unit(0.2, "cm"),
+                                        # legend.margin = unit(0, "cm"),
+                                        legend.title = element_text(face="italic")))
+```
+
+
+```{r brms results: plot  investment model,fig.width = 12, fig.height = 8, echo=FALSE, warning= FALSE}
+
+
+# if(!exists("brms_investment_treatment")) {
+#   brms_investment_treatment <- readRDS("Behavioral Models/brms_investment_treatment_logtrial.rds")
+# }
+# # summary(brms_investment_treatment)
+# 
+# # pars_all <- grep("^b_T", names(brms_investment_treatment), value = T)
+# mcmc_plot(brms_investment_treatment, pars = c("b_"), prob = 0.80, prob_outer = 0.95) + geom_vline(xintercept=0, size=0.5, alpha=0.5, linetype=2) + theme_minimal(base_size = 25) +
+#   theme(axis.line = element_line(colour = "black")) + labs(subtitle = "Predicting Investment\nModel Estimates\n(95% and 80% CI)") 
+
+if(!exists("brms_investment_genotype_logtrials")) {
+  brms_investment_genotype <- readRDS("Behavioral Models/brms_investment_genotype.rds")
+  
+}
+pars_all <- c("b_TrusteeBad",
+              "b_logtrial",
+              "b_Treatmentsulpiride",
+              "b_GenotypeA1M",
+              "b_TrusteeBad:logtrial",
+              "b_TrusteeBad:Treatmentsulpiride",
+              "b_logtrial:Treatmentsulpiride",
+              "b_TrusteeBad:GenotypeA1M",
+              "b_logtrial:GenotypeA1M",
+              "b_Treatmentsulpiride:GenotypeA1M",
+              "b_TrusteeBad:logtrial:Treatmentsulpiride",
+              "b_TrusteeBad:logtrial:GenotypeA1M",
+              "b_TrusteeBad:Treatmentsulpiride:GenotypeA1M",
+              "b_logtrial:Treatmentsulpiride:GenotypeA1M",
+              "b_TrusteeBad:logtrial:Treatmentsulpiride:GenotypeA1M"
+)
+pars_all_reduced <- c(
+  # "b_TrusteeBad",
+  # "b_logtrial",
+  # "b_Treatmentsulpiride",
+  # "b_GenotypeA1M",
+  "b_TrusteeBad:logtrial",
+  # "b_TrusteeBad:Treatmentsulpiride",
+  "b_logtrial:Treatmentsulpiride",
+  # "b_TrusteeBad:GenotypeA1M",
+  "b_logtrial:GenotypeA1M",
+  # "b_Treatmentsulpiride:GenotypeA1M",
+  "b_TrusteeBad:logtrial:Treatmentsulpiride",
+  "b_TrusteeBad:logtrial:GenotypeA1M",
+  # "b_TrusteeBad:Treatmentsulpiride:GenotypeA1M",
+  "b_logtrial:Treatmentsulpiride:GenotypeA1M",
+  "b_TrusteeBad:logtrial:Treatmentsulpiride:GenotypeA1M"
+)
+# pars_all <- c("b_TrusteeBad:logtrial",
+#               "b_TrusteeBad:Treatmentsulpride",
+#               "b_logtrial:Treatmentsulpride",
+#               "b_TrusteeBad:GenotypeA1M",
+#               "b_logtrial:GenotypeA1M",
+#               "b_Treatmentsulpride:GenotypeA1M",
+#               "b_TrusteeBad:logtrial:Treatmentsulpride",
+#               "b_TrusteeBad:logtrial:GenotypeA1M",
+#               "b_TrusteeBad:Treatmentsulpride:GenotypeA1M",
+#               "b_logtrial:Treatmentsulpride:GenotypeA1M",
+#               "b_TrusteeBad:logtrial:Treatmentsulpride:GenotypeA1M"
+# )
+pars_all_label <- c("Trustee",
+                    "log(trial)",
+                    "Treatment",
+                    "Genotype",
+                    "Trustee:log(trial)",
+                    "Trustee:Treatment",
+                    "log(trial):Treatment",
+                    "Trustee:Genotype",
+                    "log(trial):Genotype",
+                    "Treatment:Genotype",
+                    "Trustee:log(trial):Treatment",
+                    "Trustee:log(trial):Genotype",
+                    "Trustee:Treatment:Genotype",
+                    "log(trial):Treatment:Genotype",
+                    "Trustee:log(trial):Treatment:Genotype"
+)
+
+pars_all_reduced_label <- c(
+  # "Trustee",
+  # "log(trial)",
+  # "Treatment",
+  # "Genotype",
+  "Trustee:log(trial)",
+  # "Trustee:Treatment",
+  "log(trial):Treatment",
+  # "Trustee:Genotype",
+  "log(trial):Genotype",
+  # "Treatment:Genotype",
+  "Trustee:log(trial):Treatment",
+  "Trustee:log(trial):Genotype",
+  # "Trustee:Treatment:Genotype",
+  "log(trial):Treatment:Genotype",
+  "Trustee:log(trial):Treatment:Genotype"
+)
+
+
+
+pars_all <- rev(pars_all)
+pars_all_label <- rev(pars_all_label)
+pars_all_reduced <- rev(pars_all_reduced)
+pars_all_reduced_label <- rev(pars_all_reduced_label)
+# mcmc_plot(brms_investment_genotype_logtrials)
+
+Row_names <- row.names(fixef(brms_investment_genotype))
+Row_names <- paste0("b_", Row_names)
+Row_names <- Row_names[!grepl("Inter", Row_names)]
+investment_stat_plot_w_Trials <- mcmc_plot(brms_investment_genotype, pars = Row_names[grepl("Trial", Row_names)], prob = 0.80, prob_outer = 0.95) + geom_vline(xintercept=0, size=0.5, alpha=0.5, linetype=2) + theme_Publication(base_size = 12) +
+  theme(axis.line = element_line(colour = "black")) 
+
+investment_stat_plot_wo_Trials <- mcmc_plot(brms_investment_genotype, pars = Row_names[!grepl("Trial", Row_names)], prob = 0.80, prob_outer = 0.95) + geom_vline(xintercept=0, size=0.5, alpha=0.5, linetype=2) + theme_Publication(base_size = 12) +# scale_y_discrete(limits = c(1,3,4))+
+  theme(axis.line = element_line(colour = "black")) 
+plot_grid(investment_stat_plot_w_Trials , investment_stat_plot_wo_Trials, ncol = 1, rel_heights = c(0.8,1))
+
+if (FALSE) {
+  post <- posterior_samples(brms_investment_genotype)
+  
+  ## learning slope for the good tustee
+  (post$b_Trial) %>% sf(1)
+  ## learning slope for the bad tustee
+  (post$`b_TrusteeBad:Trial` + post$b_Trial) %>%  sf(1)
+  
+  ## learning slope Treatment vs placebo: good guy a1+ **
+  slope_good_a1p <- (post$`b_Trial:Treatmentsulpride`)
+  
+  # gapg <- tibble(samples = post$`b_Trial:Treatmentsulpride`) %>% ggplot(aes(samples)) + geom_density() + theme_Publication(base_size=10) + geom_vline(xintercept = 0) + ylab("Sulpiride effect on trial slope\nagainst the bad trustee (A1+)")
+  
+  
+  ## learning slope Treatment vs placebo: bad  guy a1+ 
+  slope_bad_a1p <-(post$`b_Trial:Treatmentsulpride` + post$`b_TrusteeBad:Trial:Treatmentsulpride`)
+  
+  ## learning slope Treatment vs placebo: good guy a1- ** 
+  slope_good_a1m <- (post$`b_Trial:Treatmentsulpride` + post$`b_Trial:Treatmentsulpride:GenotypeA1M`)
+  
+  
+  
+  ## learning slope Treatment vs placebo: bad  guy a1- ** 
+  slope_bad_a1m<-  (post$`b_Trial:Treatmentsulpride` + post$`b_TrusteeBad:Trial:Treatmentsulpride` +   post$`b_Trial:Treatmentsulpride:GenotypeA1M` +   post$`b_TrusteeBad:Trial:Treatmentsulpride:GenotypeA1M`) 
+  
+  ## learning slope Treatment vs placebo: good guy across genotype
+  slope_good_gen <- (post$`b_Trial:Treatmentsulpride` + 1/2*(post$`b_Trial:Treatmentsulpride:GenotypeA1M` + post$`b_Trial:GenotypeA1M`)) 
+  ## learning slope Treatment vs placebo: bad  guy across genotype
+  slope_bad_gen <- (post$`b_Trial:Treatmentsulpride` +  post$`b_TrusteeBad:Trial:Treatmentsulpride` +  1/2*(post$`b_Trial:Treatmentsulpride:GenotypeA1M` + post$`b_Trial:GenotypeA1M` + post$`b_TrusteeBad:Trial:GenotypeA1M` + post$`b_TrusteeBad:Trial:Treatmentsulpride:GenotypeA1M`))
+  
+  
+  
+  ## inital investment good 
+  int_sul_good_a1p<-  (post$b_Treatmentsulpride)
+  int_sul_good_a1m<-  (post$b_Treatmentsulpride + post$`b_Treatmentsulpride:GenotypeA1M`) 
+  
+  ## inital investment  bad guy
+  int_sul_bad_a1p<-(post$b_Treatmentsulpride + post$`b_TrusteeBad:Treatmentsulpride`)
+  int_sul_bad_a1m <- (post$b_Treatmentsulpride  + post$`b_TrusteeBad:Treatmentsulpride` + post$`b_Treatmentsulpride:GenotypeA1M` + post$`b_TrusteeBad:Treatmentsulpride:GenotypeA1M`) 
+  
+  
+  ## average investment 
+  ## learning slope Treatment vs placebo: bad  guy a1+ 
+  (int_sul_good_a1p + 13*slope_good_a1p) %>% sf()
+  (int_sul_bad_a1p + 13*slope_bad_a1p) %>% sf()
+  (int_sul_good_a1m + 13*slope_good_a1m) %>% sf()
+  (int_sul_bad_a1m + 13*slope_bad_a1m) %>% sf()
+  
+  (int_sul_good_a1p + 25*slope_good_a1p) %>% sf()
+  (int_sul_bad_a1p + 25*slope_bad_a1p) %>% sf()
+  (int_sul_good_a1m + 25*slope_good_a1m) %>% sf()
+  (int_sul_bad_a1m + 25*slope_bad_a1m) %>% sf()
+  
+  (int_sul_good_a1p +0*slope_good_a1p) %>% sf()
+  (int_sul_bad_a1p + 0*slope_bad_a1p) %>% sf()
+  (int_sul_good_a1m + 0*slope_good_a1m) %>% sf()
+  (int_sul_bad_a1m + 0*slope_bad_a1m) %>% sf()
+  
+  (slope_good_a1p) %>% sf()
+  (slope_bad_a1p) %>% sf()
+  (slope_good_a1m) %>% sf()
+  (slope_bad_a1m) %>% sf()
+  
+  g_stats_investments <- bind_cols(CD = int_sul_good_a1p + 12.5*slope_good_a1p,
+                                   CC =  int_sul_bad_a1p + 12.5*slope_bad_a1p,
+                                   CB = int_sul_good_a1m + 12.5*slope_good_a1m,
+                                   CA = int_sul_bad_a1m + 12.5*slope_bad_a1m,
+                                   BD = int_sul_good_a1p + 0*slope_good_a1p,
+                                   BC =  int_sul_bad_a1p + 0*slope_bad_a1p,
+                                   BB = int_sul_good_a1m + 0*slope_good_a1m,
+                                   BA = int_sul_bad_a1m + 0*slope_bad_a1m,
+                                   AD = int_sul_good_a1p + 25*slope_good_a1p,
+                                   AC =  int_sul_bad_a1p + 25*slope_bad_a1p,
+                                   AB = int_sul_good_a1m + 25*slope_good_a1m,
+                                   AA = int_sul_bad_a1m + 25*slope_bad_a1m) %>% 
+    # convert them to the long format, group, and get the posterior summaries
+    pivot_longer(everything()) %>%
+    group_by(name) %>% 
+    summarise(mean = mean(value),
+              ll   = quantile(value, prob = .025),
+              ul   = quantile(value, prob = .975),
+              lls   = quantile(value, prob = .25),
+              uls   = quantile(value, prob = .75)) %>%  # since the `key` variable is really two variables in one, here we split them up
+    
+    
+    # plot!
+    ggplot(aes(x = mean, xmin = ll, xmax = ul, y = name)) +
+    geom_errorbar(aes(xmin = lls, xmax = uls), size = 1.5,color = "firebrick", width = 0)+
+    geom_vline(xintercept = 0,  linetype = "dashed") +
+    geom_pointrange(color = "firebrick") +
+    labs( y = NULL) + # subtitle = "Effect sizes (95% and 50% quantiles)",
+    theme_Publication(base_size = 15) +
+    theme(panel.grid = element_blank(),
+          axis.text.x = element_text(size=12),
+          strip.background = element_rect(fill = "transparent", color = "transparent"),
+          axis.title.x =  element_blank()) +
+    scale_y_discrete(labels = rev(c("S - P in A1+ vs good trustee", 
+                                    "S - P in A1+ vs bad trustee",
+                                    "S - P in A1- vs good trustee",
+                                    "S - P in A1- vs bad trustee",
+                                    "S - P first trial in A1+ vs good trustee",
+                                    "S - P first trial in A1+ vs bad trustee",
+                                    "S - P first trial in A1- vs good trustee",
+                                    "S - P first trial in A1- vs bad trustee",
+                                    "S - P last trial in A1+ vs good trustee",
+                                    "S - P last trial in A1+ vs bad trustee",
+                                    "S - P last trial in A1- vs good trustee",
+                                    "S - P last trial in A1- vs bad trustee")) )
+  
+  
+  
+  
+  gapg <- tibble(samples = post$`b_Trial:Treatmentsulpride`) %>% ggplot(aes(samples)) + geom_density(fill = "gray")  + theme_Publication(base_size=15) + geom_vline(xintercept = 0) + xlab("Good Trustee") + ylab("A1+ subjects")
+  
+  gapb <- tibble(samples = post$`b_Trial:Treatmentsulpride` + post$`b_TrusteeBad:Trial:Treatmentsulpride`) %>% ggplot(aes(samples)) + geom_density(fill = "gray") + theme_Publication(base_size=15) + geom_vline(xintercept = 0) + xlab("Bad Trustee") + ylab("A1+ subjects")
+  gamg <- tibble(samples = post$`b_Trial:Treatmentsulpride` + post$`b_Trial:Treatmentsulpride:GenotypeA1M`) %>% ggplot(aes(samples)) + geom_density(fill = "gray")  + theme_Publication(base_size=15) + geom_vline(xintercept = 0) + xlab("Good Trustee") + ylab("A1- subjects")
+  gamb <- tibble(samples = post$`b_Trial:Treatmentsulpride` + post$`b_TrusteeBad:Trial:Treatmentsulpride` +   post$`b_Trial:Treatmentsulpride:GenotypeA1M` +   post$`b_TrusteeBad:Trial:Treatmentsulpride:GenotypeA1M`) %>% ggplot(aes(samples)) + geom_density(fill = "gray")  + theme_Publication(base_size=15) + geom_vline(xintercept = 0) + xlab("Bad Trustee") + ylab("A1- subjects")
+  
+  
+  plot_grid(gamg, gamb, gapg ,gapb)
+  
+  data_beh %>% group_by(ID, Treatment, Genotype) %>% summarize(Treatment = Treatment[1], Genotype = Genotype[1]) %>% group_by( Treatment, Genotype) %>% summarize(N=n())
+  
+  
+}
+
+cona1p <- 17
+cona1m <- 21
+sula1p <- 21
+sula1m <- 17
+
+```
+
+
+
