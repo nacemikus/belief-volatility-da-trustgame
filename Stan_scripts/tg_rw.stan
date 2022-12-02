@@ -5,7 +5,7 @@ data {
   int<lower=0, upper=10> transfer[N,T];  // 1: 1 - 4
   int<lower=-1, upper=1> backtransfer[N,T];  // 1,2 
   int<lower=1, upper=2> trustee[N,T];  // 1,2 
-  // int<lower=-4, upper=5> reward[N,T];
+
   
   int<lower=0, upper=1> sulpiride[N];
   int<lower=0, upper=1> ankk[N];
@@ -20,8 +20,7 @@ parameters {
   matrix[4, N] z;
   cholesky_factor_corr[4] L_Omega;
   ordered[10] c;
-  // vector<lower=0>[10] sigma_c;
-  // real<lower=0> sigma_c;
+
   
   
   // fixed parameters
@@ -35,15 +34,15 @@ parameters {
 
   real beta_noise;
   real beta_mu0;
-  // real beta_gam;
+ 
 
   real beta_sul_ankk_noise;
   real beta_sul_ankk_mu0;
-  // real beta_sul_ankk_gam;
+ 
   
   real beta_ankk_noise;
   real beta_ankk_mu0;
-  // real beta_ankk_gam;
+  
 }
 transformed parameters {
   // Transform subject-level raw parameters
@@ -51,7 +50,7 @@ transformed parameters {
   vector[N] al;
   vector[N] noise;
   vector[N] mu0;
-  // vector[N] gam;
+
   matrix[4, N] r1;
   
   r1 = (diag_pre_multiply(sigma,L_Omega) * z);
@@ -85,9 +84,7 @@ transformed parameters {
                   (beta_mu0 + beta_sul_ankk_mu0*ankk[i])*sulpiride[i]+
                    beta_ankk_mu0*ankk[i] );
                    
-      // gam[i]     =exp( mu_p[5] + r1[5,i]+ 
-                  // (beta_gam + beta_sul_ankk_gam*ankk[i])*sulpiride[i]+
-                   // beta_ankk_gam*ankk[i] );
+    
 
   }
 }
@@ -97,13 +94,13 @@ model {
   mu_p[2]  ~ normal(0, 1);
   mu_p[3]  ~ normal(0, 1);
   mu_p[4]  ~ normal(0, 1);
-  // mu_p[5]  ~ normal(0, 0.5);
+
   
   sigma[1]  ~ normal(0, 0.2);
   sigma[2]  ~ normal(0, 0.2);
   sigma[3]  ~ normal(0, 0.2);
   sigma[4]  ~ normal(0, 0.2); // cauchy(0,3); // 
-  // sigma[5]  ~ normal(0, 0.2);
+ 
   c ~ normal(0,5);
    // individual parameters
   to_vector(z) ~  normal(0, 1);
@@ -134,10 +131,7 @@ model {
   beta_ankk_noise ~ normal(0,1);
   beta_ankk_mu0 ~ normal(0,1);
  
-  // beta_gam ~ normal(0,1);
-  // beta_sul_ankk_gam ~ normal(0,1);
-  // beta_ankk_gam ~ normal(0,1);
-   
+ 
   
   for (i in 1:N) {
     // Define values

@@ -2,7 +2,7 @@ library(scales)
 library(grid)
 library(ggthemes)
 
-theme_Publication <- function(base_size=15) { # base_family="arial"
+theme_Publication <- function(base_size=10) { # base_family="arial"
   
   (theme_foundation(base_size=base_size) #, base_family=base_family
     + theme(plot.title = element_text(face = "bold",

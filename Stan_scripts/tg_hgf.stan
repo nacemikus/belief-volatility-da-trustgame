@@ -149,9 +149,9 @@ model {
   beta_ankk_noise ~ normal(0,1);
   beta_ankk_mu0 ~ normal(0,1);
   
-  beta_gam ~ normal(0,1);
-  beta_sul_ankk_gam ~ normal(0,1);
-  beta_ankk_gam ~ normal(0,1);
+  // beta_gam ~ normal(0,1);
+  // beta_sul_ankk_gam ~ normal(0,1);
+  // beta_ankk_gam ~ normal(0,1);
   // beta_mu0 ~ normal(0,5);
   
   // beta_ami ~ normal(0,2);

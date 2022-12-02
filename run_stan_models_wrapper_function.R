@@ -25,8 +25,8 @@ run_model_fit <- function(modelfile, savemodelname, nIter_set, nWarmup_set=0, si
 ### load data
    
    
-data_temp <- read.csv ('R_table_beh.csv', header = T, sep="," )
-
+# data_temp <- read.csv ('R_table_beh.csv', header = T, sep="," )
+data_temp <- readRDS("Behavioural_data.rds") 
 
 if (simulate ==1) print("simulating from the prior")
  ### prepare data
@@ -35,15 +35,16 @@ subjList <- unique(data_temp$ID)
 removeSubjects<- {} 
 
 ### load data
-ankk <- data_temp$ankk[data_temp$trials==1]
+ankk <- data_temp$ankk[data_temp$Trial==1]
 
 numSub <- length(subjList)
-
-
+swm_error = data_temp$error_sum_all[data_temp$Trial==1]
+swm_error = ave(swm_error, FUN =scale)
+mean(swm_error)
 Tsubj <- as.vector(rep(0, numSub))
 Tsubj_remove <- as.vector(rep(0, numSub))
 for (ss in 1:numSub) {
-  Tsubj[ss] <- max(data_temp$trials[data_temp$ID == subjList[ss]]);
+  Tsubj[ss] <- max(data_temp$Trial[data_temp$ID == subjList[ss]]);
 }
 
 maxTrials <- max(Tsubj)
@@ -61,14 +62,14 @@ for (i in 1:numSub) {
   
 }
 
-sulpiride <- data_temp$drug[data_temp$trials==1] # sul
+sulpiride <- data_temp$drug[data_temp$Trial==1] # sul
 
-serum <- data_temp$serum[data_temp$trials==1] # Nal
+serum <- data_temp$serum[data_temp$Trial==1] # ser
 
 
 dataList <- list(N = numSub, T = maxTrials, Tsubj = Tsubj, transfer = transfer, backtransfer=backtransfer,
                  trustee = trustee,  ankk =ankk, sulpiride= sulpiride, serum = serum, simulate = simulate, 
-                 Tsubj_remove = Tsubj_remove)
+                 Tsubj_remove = Tsubj_remove, swm_error = swm_error)
 
 
 if (length(removeSubjects)!=0) {
